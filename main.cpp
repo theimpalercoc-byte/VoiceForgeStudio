@@ -17,55 +17,6 @@
 
 namespace fs = std::filesystem;
 
-typedef int (*nvmlReturn_t)();
-typedef nvmlReturn_t (*pfn_nvmlInit_v2)();
-typedef nvmlReturn_t (*pfn_nvmlShutdown)();
-typedef nvmlReturn_t (*pfn_nvmlDeviceGetHandleByIndex_v2)(unsigned int, void**);
-typedef struct {
-    unsigned long long total;
-    unsigned long long free;
-    unsigned long long used;
-} NVML_MEMORY_T;
-typedef nvmlReturn_t (*pfn_nvmlDeviceGetMemoryInfo)(void*, NVML_MEMORY_T*);
-
-struct GpuSpecs {
-    bool hasNvidia = false;
-    unsigned long long totalVramMB = 0;
-    unsigned long long freeVramMB = 0;
-};
-
-GpuSpecs QueryHardwareAcceleration() {
-    GpuSpecs specs;
-    HMODULE hCuda = LoadLibraryW(L"nvcuda.dll");
-    if (!hCuda) return specs;
-    FreeLibrary(hCuda);
-    specs.hasNvidia = true;
-
-    HMODULE hNvml = LoadLibraryW(L"nvml.dll");
-    if (hNvml) {
-        auto nvmlInit = (pfn_nvmlInit_v2)GetProcAddress(hNvml, "nvmlInit_v2");
-        auto nvmlShutdown = (pfn_nvmlShutdown)GetProcAddress(hNvml, "nvmlShutdown");
-        auto nvmlGetHandle = (pfn_nvmlDeviceGetHandleByIndex_v2)GetProcAddress(hNvml, "nvmlDeviceGetHandleByIndex_v2");
-        auto nvmlGetMem = (pfn_nvmlDeviceGetMemoryInfo)GetProcAddress(hNvml, "nvmlDeviceGetMemoryInfo");
-
-        if (nvmlInit && nvmlShutdown && nvmlGetHandle && nvmlGetMem) {
-            if (nvmlInit() == 0) {
-                void* deviceHandle = nullptr;
-                if (nvmlGetHandle(0, &deviceHandle) == 0) {
-                    NVML_MEMORY_T memInfo{};
-                    if (nvmlGetMem(deviceHandle, &memInfo) == 0) {
-                        specs.totalVramMB = memInfo.total / (1024 * 1024);
-                        specs.freeVramMB = memInfo.free / (1024 * 1024);
-                    }
-                }
-                nvmlShutdown();
-            }
-        }
-        FreeLibrary(hNvml);
-    }
-    return specs;
-}
-
 bool WaitForLocalServerReady(unsigned short port, int maxTimeoutSeconds) {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return false;
@@ -107,34 +58,89 @@ bool WaitForLocalServerReady(unsigned short port, int maxTimeoutSeconds) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
-    // 1. Single-Instance Protection (User session scope)
+    // 1. Single-Instance Protection
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"Local\\VoiceForgeStudio_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         ShellExecuteW(NULL, L"open", L"http://localhost:8080", NULL, NULL, SW_SHOWNORMAL);
         return 0;
     }
 
-    // 2. High-Priority Thread Scheduling
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 
-    // 3. Resolve Application Base Directory
     wchar_t exeBuffer[MAX_PATH];
     GetModuleFileNameW(NULL, exeBuffer, MAX_PATH);
     fs::path baseDir = fs::path(exeBuffer).parent_path();
     SetCurrentDirectoryW(baseDir.c_str());
 
-    // 4. Runtime Pre-flight Check (Prevents silent launch failure)
     fs::path runtimeDir = baseDir / "runtime";
     fs::path pythonExe = runtimeDir / "python.exe";
+    fs::path setupScript = baseDir / "setup_portable_runtime.ps1";
 
+    // 2. AUTOMATIC FIRST-TIME SETUP SUPERVISOR
     if (!fs::exists(pythonExe)) {
-        MessageBoxW(NULL,
-            L"VoiceForge portable runtime was not found!\n\n"
-            L"Please right-click 'setup_portable_runtime.ps1' and select 'Run with PowerShell'\n"
-            L"(or double-click 'run_voiceforge.bat') to complete the one-time setup first.",
-            L"VoiceForge Studio — Setup Required",
-            MB_ICONWARNING | MB_OK);
-        return 1;
+        int res = MessageBoxW(NULL,
+            L"Welcome to VoiceForge Master Studio!\n\n"
+            L"First-time setup is required to download the portable Python engine and audio libraries.\n\n"
+            L"Click OK to begin automatic setup.",
+            L"VoiceForge Studio — First-Time Setup",
+            MB_OKCANCEL | MB_ICONINFORMATION);
+
+        if (res != IDOK) {
+            return 0;
+        }
+
+        if (!fs::exists(setupScript)) {
+            MessageBoxW(NULL, L"Error: 'setup_portable_runtime.ps1' not found in the application directory.", L"Setup Error", MB_ICONERROR | MB_OK);
+            return 1;
+        }
+
+        // Launch setup with Bypass in a visible console window so user sees progress
+        std::wstring psCmd = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" + setupScript.wstring() + L"\"";
+
+        STARTUPINFOW siSetup{};
+        siSetup.cb = sizeof(siSetup);
+        PROCESS_INFORMATION piSetup{};
+
+        BOOL setupLaunched = CreateProcessW(
+            NULL,
+            &psCmd[0],
+            NULL,
+            NULL,
+            FALSE,
+            CREATE_NEW_CONSOLE,
+            NULL,
+            baseDir.c_str(),
+            &siSetup,
+            &piSetup
+        );
+
+        if (!setupLaunched) {
+            MessageBoxW(NULL, L"Failed to launch PowerShell setup. Please run setup.bat manually.", L"Error", MB_ICONERROR | MB_OK);
+            return 1;
+        }
+
+        // Wait for setup to finish while keeping message loop alive
+        MSG msg;
+        while (true) {
+            DWORD dwWait = MsgWaitForMultipleObjectsEx(1, &piSetup.hProcess, INFINITE, QS_ALLINPUT, MWMO_ALERTABLE);
+            if (dwWait == WAIT_OBJECT_0) break;
+            while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+
+        CloseHandle(piSetup.hProcess);
+        CloseHandle(piSetup.hThread);
+
+        // Re-verify python.exe exists after setup
+        if (!fs::exists(pythonExe)) {
+            MessageBoxW(NULL,
+                L"Setup was cancelled or failed to create 'runtime/python.exe'.\n\n"
+                L"Double-click 'setup.bat' to inspect any download errors.",
+                L"Setup Incomplete", MB_ICONERROR | MB_OK);
+            return 1;
+        }
     }
 
     fs::path appPy = baseDir / "app.py";
@@ -143,7 +149,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // 5. Environment Variables for Isolation
+    // 3. Isolated Environment Setup
     fs::path sitePackages = runtimeDir / "Lib" / "site-packages";
     fs::path playwrightBrowsers = runtimeDir / "playwright-browsers";
 
@@ -151,7 +157,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     SetEnvironmentVariableW(L"PLAYWRIGHT_BROWSERS_PATH", playwrightBrowsers.c_str());
     SetEnvironmentVariableW(L"HF_HUB_DISABLE_SYMLINKS_WARNING", L"1");
 
-    // 6. Windows Job Object (Prevents Orphan Background Processes)
+    // 4. Windows Job Object (Child Process Termination Guarantee)
     HANDLE hJob = CreateJobObjectW(NULL, NULL);
     if (hJob) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
@@ -159,7 +165,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
     }
 
-    // 7. Launch Python Backend
+    // 5. Launch Backend Server
     std::wstring cmd = L"\"" + pythonExe.wstring() + L"\" \"" + appPy.wstring() + L"\"";
 
     STARTUPINFOW si{};
@@ -192,7 +198,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
     ResumeThread(pi.hThread);
 
-    // 8. Auto-Open Browser when Port 8080 Responds
+    // 6. Asynchronous Browser Opener
     std::thread([hProcess = pi.hProcess]() {
         if (WaitForLocalServerReady(8080, 45)) {
             ShellExecuteW(NULL, L"open", L"http://localhost:8080", NULL, NULL, SW_SHOWNORMAL);
@@ -201,12 +207,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }).detach();
 
-    // 9. Responsive Message Loop (Prevents Explorer from Locking/Freezing)
+    // 7. Non-blocking Message Pump
     MSG msg;
     while (true) {
         DWORD dwWait = MsgWaitForMultipleObjectsEx(1, &pi.hProcess, INFINITE, QS_ALLINPUT, MWMO_ALERTABLE);
         if (dwWait == WAIT_OBJECT_0) {
-            break; // Python process exited cleanly
+            break;
         }
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) break;
