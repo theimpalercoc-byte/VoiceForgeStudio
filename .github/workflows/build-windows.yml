@@ -34,7 +34,7 @@ jobs:
           Copy-Item app.py, chat_sources.py, engine_manager.py, kokoro_engine.py, audio_filter.py, scheduler.py dist\VoiceForgeStudio\
           Copy-Item index.html, reader.html, config.json, filter_rules.json, README.md dist\VoiceForgeStudio\
           Copy-Item -Recurse voices, output, browser_profile dist\VoiceForgeStudio\
-          Copy-Item setup_portable_runtime.ps1 dist\VoiceForgeStudio\
+          Copy-Item setup_portable_runtime.ps1, run_voiceforge.bat dist\VoiceForgeStudio\
           Compress-Archive -Path dist\VoiceForgeStudio\* -DestinationPath VoiceForgeStudio-Windows-x64.zip -Force
 
       - name: Upload Windows Standalone Artifact
