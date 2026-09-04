@@ -17,9 +17,6 @@
 
 namespace fs = std::filesystem;
 
-// ---------------------------------------------------------------------------
-// Dynamic NVML API Signatures (GPU/VRAM Pre-flight without CUDA SDK link)
-// ---------------------------------------------------------------------------
 typedef int (*nvmlReturn_t)();
 typedef nvmlReturn_t (*pfn_nvmlInit_v2)();
 typedef nvmlReturn_t (*pfn_nvmlShutdown)();
@@ -69,18 +66,6 @@ GpuSpecs QueryHardwareAcceleration() {
     return specs;
 }
 
-unsigned long long QueryAvailableSystemRamMB() {
-    MEMORYSTATUSEX mem{};
-    mem.dwLength = sizeof(MEMORYSTATUSEX);
-    if (GlobalMemoryStatusEx(&mem)) {
-        return mem.ullAvailPhys / (1024 * 1024);
-    }
-    return 0;
-}
-
-// ---------------------------------------------------------------------------
-// TCP Socket Health Probe for FastAPI / Uvicorn Server Port 8080
-// ---------------------------------------------------------------------------
 bool WaitForLocalServerReady(unsigned short port, int maxTimeoutSeconds) {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return false;
@@ -105,7 +90,7 @@ bool WaitForLocalServerReady(unsigned short port, int maxTimeoutSeconds) {
             fd_set writeSet;
             FD_ZERO(&writeSet);
             FD_SET(sock, &writeSet);
-            timeval tv{ 0, 200000 }; // 200ms
+            timeval tv{ 0, 200000 };
 
             if (select(0, nullptr, &writeSet, nullptr, &tv) > 0) {
                 isReady = true;
@@ -121,21 +106,15 @@ bool WaitForLocalServerReady(unsigned short port, int maxTimeoutSeconds) {
     return isReady;
 }
 
-// ---------------------------------------------------------------------------
-// Main Process Supervisor
-// ---------------------------------------------------------------------------
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
-    // 1. Single-Instance Protection
-    HANDLE hMutex = CreateMutexW(NULL, TRUE, L"Global\\VoiceForgeStudio_SingleInstance_Mutex");
+    // 1. Single-Instance Protection (User session scope)
+    HANDLE hMutex = CreateMutexW(NULL, TRUE, L"Local\\VoiceForgeStudio_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        MessageBoxW(NULL, 
-            L"VoiceForge Master Studio is already running in the background.\nOpening existing instance in your browser...", 
-            L"VoiceForge Studio", MB_ICONINFORMATION | MB_OK);
         ShellExecuteW(NULL, L"open", L"http://localhost:8080", NULL, NULL, SW_SHOWNORMAL);
         return 0;
     }
 
-    // 2. Real-Time High-Priority Thread Scheduling
+    // 2. High-Priority Thread Scheduling
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 
     // 3. Resolve Application Base Directory
@@ -144,37 +123,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     fs::path baseDir = fs::path(exeBuffer).parent_path();
     SetCurrentDirectoryW(baseDir.c_str());
 
-    // 4. Pre-flight Hardware Verification
-    GpuSpecs gpu = QueryHardwareAcceleration();
-    unsigned long long ramMB = QueryAvailableSystemRamMB();
-
-    if (ramMB < 2048) {
-        MessageBoxW(NULL, 
-            L"Warning: Less than 2 GB of physical RAM is available.\nAI synthesis may run out of memory.", 
-            L"VoiceForge Pre-flight Notice", MB_ICONWARNING | MB_OK);
-    }
-
-    // 5. Environment Variables for Isolated Portability
+    // 4. Runtime Pre-flight Check (Prevents silent launch failure)
     fs::path runtimeDir = baseDir / "runtime";
-    fs::path sitePackages = runtimeDir / "Lib" / "site-packages";
-    fs::path playwrightBrowsers = runtimeDir / "playwright-browsers";
-
-    SetEnvironmentVariableW(L"PYTHONUNBUFFERED", L"1");
-    SetEnvironmentVariableW(L"PLAYWRIGHT_BROWSERS_PATH", playwrightBrowsers.c_str());
-    SetEnvironmentVariableW(L"HF_HUB_DISABLE_SYMLINKS_WARNING", L"1");
-
-    // 6. Windows Job Object (Child Process Lifecycle Management)
-    HANDLE hJob = CreateJobObjectW(NULL, NULL);
-    if (hJob) {
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
-        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
-        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
-    }
-
-    // 7. Locate Runtime Executable
     fs::path pythonExe = runtimeDir / "python.exe";
+
     if (!fs::exists(pythonExe)) {
-        pythonExe = L"python.exe"; // Fallback to PATH if runtime not yet bundled
+        MessageBoxW(NULL,
+            L"VoiceForge portable runtime was not found!\n\n"
+            L"Please right-click 'setup_portable_runtime.ps1' and select 'Run with PowerShell'\n"
+            L"(or double-click 'run_voiceforge.bat') to complete the one-time setup first.",
+            L"VoiceForge Studio — Setup Required",
+            MB_ICONWARNING | MB_OK);
+        return 1;
     }
 
     fs::path appPy = baseDir / "app.py";
@@ -183,7 +143,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // 8. Launch Python Backend Process Suspended
+    // 5. Environment Variables for Isolation
+    fs::path sitePackages = runtimeDir / "Lib" / "site-packages";
+    fs::path playwrightBrowsers = runtimeDir / "playwright-browsers";
+
+    SetEnvironmentVariableW(L"PYTHONUNBUFFERED", L"1");
+    SetEnvironmentVariableW(L"PLAYWRIGHT_BROWSERS_PATH", playwrightBrowsers.c_str());
+    SetEnvironmentVariableW(L"HF_HUB_DISABLE_SYMLINKS_WARNING", L"1");
+
+    // 6. Windows Job Object (Prevents Orphan Background Processes)
+    HANDLE hJob = CreateJobObjectW(NULL, NULL);
+    if (hJob) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+    }
+
+    // 7. Launch Python Backend
     std::wstring cmd = L"\"" + pythonExe.wstring() + L"\" \"" + appPy.wstring() + L"\"";
 
     STARTUPINFOW si{};
@@ -206,35 +182,38 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     );
 
     if (!procCreated) {
-        std::wstring err = L"Failed to start Python runtime. Windows Error: " + std::to_wstring(GetLastError());
+        std::wstring err = L"Failed to start Python runtime. Error Code: " + std::to_wstring(GetLastError());
         MessageBoxW(NULL, err.c_str(), L"Engine Startup Error", MB_ICONERROR | MB_OK);
         return 1;
     }
 
-    // Bind Process to Job Object before starting execution
     if (hJob) {
         AssignProcessToJobObject(hJob, pi.hProcess);
     }
     ResumeThread(pi.hThread);
 
-    // 9. Asynchronous Connection Check & Browser Auto-Launch
+    // 8. Auto-Open Browser when Port 8080 Responds
     std::thread([hProcess = pi.hProcess]() {
-        if (WaitForLocalServerReady(8080, 30)) {
+        if (WaitForLocalServerReady(8080, 45)) {
             ShellExecuteW(NULL, L"open", L"http://localhost:8080", NULL, NULL, SW_SHOWNORMAL);
         } else {
-            DWORD exitCode = 0;
-            if (GetExitCodeProcess(hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
-                MessageBoxW(NULL, 
-                    L"VoiceForge server shut down immediately after launch.\nCheck engine dependencies or model weights.", 
-                    L"Runtime Stopped", MB_ICONERROR | MB_OK);
-            } else {
-                ShellExecuteW(NULL, L"open", L"http://localhost:8080", NULL, NULL, SW_SHOWNORMAL);
-            }
+            ShellExecuteW(NULL, L"open", L"http://localhost:8080", NULL, NULL, SW_SHOWNORMAL);
         }
     }).detach();
 
-    // 10. Supervise until Process Exits
-    WaitForSingleObject(pi.hProcess, INFINITE);
+    // 9. Responsive Message Loop (Prevents Explorer from Locking/Freezing)
+    MSG msg;
+    while (true) {
+        DWORD dwWait = MsgWaitForMultipleObjectsEx(1, &pi.hProcess, INFINITE, QS_ALLINPUT, MWMO_ALERTABLE);
+        if (dwWait == WAIT_OBJECT_0) {
+            break; // Python process exited cleanly
+        }
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) break;
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
