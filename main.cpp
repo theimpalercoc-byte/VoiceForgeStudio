@@ -74,13 +74,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     fs::path runtimeDir = baseDir / "runtime";
     fs::path pythonExe = runtimeDir / "python.exe";
-    fs::path setupScript = baseDir / "setup_portable_runtime.ps1";
+    fs::path setupBat = baseDir / "setup.bat";
 
-    // 2. AUTOMATIC FIRST-TIME SETUP SUPERVISOR
+    // 2. AUTOMATIC FIRST-TIME SETUP (Via native setup.bat)
     if (!fs::exists(pythonExe)) {
         int res = MessageBoxW(NULL,
             L"Welcome to VoiceForge Master Studio!\n\n"
-            L"First-time setup is required to download the portable Python engine and audio libraries.\n\n"
+            L"First-time setup is required to download the portable runtime (Python, CUDA PyTorch, and audio libraries).\n\n"
             L"Click OK to begin automatic setup.",
             L"VoiceForge Studio — First-Time Setup",
             MB_OKCANCEL | MB_ICONINFORMATION);
@@ -89,13 +89,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             return 0;
         }
 
-        if (!fs::exists(setupScript)) {
-            MessageBoxW(NULL, L"Error: 'setup_portable_runtime.ps1' not found in the application directory.", L"Setup Error", MB_ICONERROR | MB_OK);
+        if (!fs::exists(setupBat)) {
+            MessageBoxW(NULL, L"Error: 'setup.bat' not found in the application directory.", L"Setup Error", MB_ICONERROR | MB_OK);
             return 1;
         }
 
-        // Launch setup with Bypass in a visible console window so user sees progress
-        std::wstring psCmd = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" + setupScript.wstring() + L"\"";
+        std::wstring cmdSetup = L"cmd.exe /c \"" + setupBat.wstring() + L"\"";
 
         STARTUPINFOW siSetup{};
         siSetup.cb = sizeof(siSetup);
@@ -103,7 +102,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         BOOL setupLaunched = CreateProcessW(
             NULL,
-            &psCmd[0],
+            &cmdSetup[0],
             NULL,
             NULL,
             FALSE,
@@ -115,29 +114,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         );
 
         if (!setupLaunched) {
-            MessageBoxW(NULL, L"Failed to launch PowerShell setup. Please run setup.bat manually.", L"Error", MB_ICONERROR | MB_OK);
+            MessageBoxW(NULL, L"Failed to launch setup.bat. Double-click setup.bat manually.", L"Error", MB_ICONERROR | MB_OK);
             return 1;
         }
 
-        // Wait for setup to finish while keeping message loop alive
-        MSG msg;
-        while (true) {
-            DWORD dwWait = MsgWaitForMultipleObjectsEx(1, &piSetup.hProcess, INFINITE, QS_ALLINPUT, MWMO_ALERTABLE);
-            if (dwWait == WAIT_OBJECT_0) break;
-            while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
-
+        // Wait for setup.bat to finish
+        WaitForSingleObject(piSetup.hProcess, INFINITE);
         CloseHandle(piSetup.hProcess);
         CloseHandle(piSetup.hThread);
 
-        // Re-verify python.exe exists after setup
         if (!fs::exists(pythonExe)) {
             MessageBoxW(NULL,
-                L"Setup was cancelled or failed to create 'runtime/python.exe'.\n\n"
-                L"Double-click 'setup.bat' to inspect any download errors.",
+                L"Setup was closed or did not finish creating 'runtime/python.exe'.\n\n"
+                L"Please run 'setup.bat' directly to inspect any network errors.",
                 L"Setup Incomplete", MB_ICONERROR | MB_OK);
             return 1;
         }
@@ -149,7 +138,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // 3. Isolated Environment Setup
+    // 3. Environment Variables
     fs::path sitePackages = runtimeDir / "Lib" / "site-packages";
     fs::path playwrightBrowsers = runtimeDir / "playwright-browsers";
 
