@@ -704,13 +704,17 @@ MODELS_CATALOG = {
         "description": "Ultra-lightweight style TTS (54 voices, 8 languages)",
         "type": "huggingface",
         "repo_id": "hexgrad/Kokoro-82M",
+        "manual_url": "https://huggingface.co/hexgrad/Kokoro-82M/tree/main",
+        "folder": "Kokoro-82M",
         "default_size": "~350 MB"
     },
     "chatterbox_nano": {
-        "name": "Chatterbox-Nano / Turbo",
-        "description": "Zero-shot fast voice cloning engine",
+        "name": "Chatterbox-Turbo",
+        "description": "Zero-shot fast voice cloning for custom voices",
         "type": "huggingface",
         "repo_id": "ResembleAI/chatterbox-turbo",
+        "manual_url": "https://huggingface.co/ResembleAI/chatterbox-turbo/tree/main",
+        "folder": "chatterbox-turbo",
         "default_size": "~1.2 GB"
     },
     "cosyvoice2": {
@@ -718,6 +722,8 @@ MODELS_CATALOG = {
         "description": "Instruction-guided expressive flow-matching model",
         "type": "local_or_hf",
         "repo_id": "FunAudioLLM/CosyVoice2-0.5B",
+        "manual_url": "https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B/tree/main",
+        "folder": "CosyVoice2-0.5B",
         "default_size": "~3.8 GB"
     },
     "qwen3_tts": {
@@ -725,9 +731,13 @@ MODELS_CATALOG = {
         "description": "Multi-emotion neural voice engine",
         "type": "huggingface",
         "repo_id": "Qwen/Qwen2.5-0.5B",
+        "manual_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B/tree/main",
+        "folder": "Qwen2.5-0.5B",
         "default_size": "~2.1 GB"
     }
 }
+
+model_download_status = {}
 
 def get_dir_size_mb(path: Path) -> float:
     if not path or not path.exists():
@@ -739,24 +749,15 @@ def get_dir_size_mb(path: Path) -> float:
 
 def find_model_path(model_id: str) -> Optional[Path]:
     info = MODELS_CATALOG.get(model_id, {})
-    repo = info.get("repo_id", "").replace("/", "--")
+    folder_name = info.get("folder", model_id)
     
-    # Check local pretrained_models folder with alias support
-    dir_map = {
-        "chatterbox_nano": "chatterbox-turbo",
-        "cosyvoice2": "CosyVoice2-0.5B",
-        "qwen3_tts": "Qwen2.5-0.5B",
-        "kokoro": "Kokoro-82M"
-    }
-    target_name = dir_map.get(model_id, model_id)
-    local_check = BASE_DIR / "pretrained_models" / target_name
+    local_check = BASE_DIR / "pretrained_models" / folder_name
     if local_check.exists() and any(local_check.iterdir()):
         return local_check
 
-    # Check HuggingFace cache
-    hf_hub = Path.home() / ".cache" / "huggingface" / "hub"
+    repo = info.get("repo_id", "").replace("/", "--")
     if repo:
-        hf_dir = hf_hub / f"models--{repo}"
+        hf_dir = Path.home() / ".cache" / "huggingface" / "hub" / f"models--{repo}"
         if hf_dir.exists():
             return hf_dir
 
@@ -769,7 +770,8 @@ async def get_models_status():
         m_path = find_model_path(m_id)
         is_installed = m_path is not None and m_path.exists()
         size_mb = get_dir_size_mb(m_path) if is_installed else 0.0
-        
+        dl_state = model_download_status.get(m_id, "idle")
+
         status[m_id] = {
             "id": m_id,
             "name": info["name"],
@@ -777,9 +779,46 @@ async def get_models_status():
             "installed": is_installed,
             "size_mb": size_mb,
             "approx_size": info["default_size"],
+            "folder_path": str((BASE_DIR / "pretrained_models" / info.get("folder", m_id)).resolve()),
+            "manual_url": info.get("manual_url", ""),
+            "download_state": dl_state,
             "active": (m_id == engine_mgr.active_engine_name) or (m_id == "kokoro")
         }
     return {"status": "success", "models": status}
+
+@app.get("/api/models/{model_id}/instructions")
+async def get_model_instructions(model_id: str):
+    info = MODELS_CATALOG.get(model_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Model not found.")
+    target_dir = BASE_DIR / "pretrained_models" / info.get("folder", model_id)
+    return {
+        "id": model_id,
+        "name": info["name"],
+        "folder_path": str(target_dir.resolve()),
+        "manual_url": info.get("manual_url", ""),
+        "approx_size": info["default_size"],
+        "installed": target_dir.exists() and any(target_dir.iterdir())
+    }
+
+@app.post("/api/models/{model_id}/verify")
+async def verify_model_installation(model_id: str):
+    info = MODELS_CATALOG.get(model_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Model not found.")
+    m_path = find_model_path(model_id)
+    is_installed = m_path is not None and m_path.exists()
+    size_mb = get_dir_size_mb(m_path) if is_installed else 0.0
+    
+    if is_installed and hasattr(engine_mgr, "engines") and "chatterbox_nano" in engine_mgr.engines:
+        engine_mgr.engines["chatterbox_nano"].init_model()
+            
+    return {
+        "status": "success",
+        "installed": is_installed,
+        "size_mb": size_mb,
+        "path": str(m_path.resolve()) if m_path else None
+    }
 
 @app.delete("/api/models/{model_id}")
 async def delete_model_endpoint(model_id: str):
@@ -795,6 +834,7 @@ async def delete_model_endpoint(model_id: str):
             shutil.rmtree(m_path)
         else:
             m_path.unlink()
+        model_download_status[model_id] = "idle"
         return {"status": "deleted", "model_id": model_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete model: {e}")
@@ -805,21 +845,38 @@ async def download_model_endpoint(model_id: str):
     if not info:
         raise HTTPException(status_code=404, detail="Unknown model.")
 
+    if model_download_status.get(model_id) == "downloading":
+        return {"status": "already_downloading", "model_id": model_id}
+
     async def do_download():
+        model_download_status[model_id] = "downloading"
         try:
-            logger.info(f"[Model Manager] Downloading {info['name']}...")
+            logger.info(f"[Model Manager] Starting download for {info[name]}...")
+            target_dir = BASE_DIR / "pretrained_models" / info.get("folder", model_id)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
             if model_id == "kokoro":
                 from kokoro import KPipeline
                 KPipeline(lang_code="a", device="cpu")
-            elif info.get("type") in ["huggingface", "local_or_hf"]:
+            elif model_id == "chatterbox_nano":
                 from huggingface_hub import snapshot_download
-                snapshot_download(repo_id=info["repo_id"])
-            logger.info(f"[Model Manager] ✓ Finished downloading {info['name']}.")
+                snapshot_download(repo_id="ResembleAI/chatterbox-turbo", local_dir=str(target_dir), token=False)
+                engine_mgr.engines["chatterbox_nano"].init_model()
+            elif model_id == "cosyvoice2":
+                from huggingface_hub import snapshot_download
+                snapshot_download(repo_id="FunAudioLLM/CosyVoice2-0.5B", local_dir=str(target_dir), token=False)
+            elif model_id == "qwen3_tts":
+                from huggingface_hub import snapshot_download
+                snapshot_download(repo_id="Qwen/Qwen2.5-0.5B", local_dir=str(target_dir), token=False)
+                
+            model_download_status[model_id] = "installed"
+            logger.info(f"[Model Manager] ✓ Successfully installed {info[name]}.")
         except Exception as err:
-            logger.error(f"[Model Manager] Error downloading {model_id}: {err}")
+            model_download_status[model_id] = "error"
+            logger.error(f"[Model Manager] Download error: {err}")
 
     asyncio.create_task(do_download())
-    return {"status": "downloading", "model_id": model_id, "message": f"Downloading {info['name']} in the background."}
+    return {"status": "downloading", "model_id": model_id, "message": f"Downloading {info[name]} in the background."}
 
 @app.post("/api/generate")
 async def manual_generate(payload: dict):

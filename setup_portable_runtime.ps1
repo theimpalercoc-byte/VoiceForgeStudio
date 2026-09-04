@@ -7,7 +7,9 @@ $PythonZipName = "python-$PythonVer-embed-amd64.zip"
 $PythonUrl = "https://www.python.org/ftp/python/$PythonVer/$PythonZipName"
 $RuntimeDir = Join-Path $ScriptDir "runtime"
 
-Write-Host "Provisioning Embedded Python ($PythonVer) + CUDA Runtime..." -ForegroundColor Cyan
+Write-Host "===========================================================" -ForegroundColor Cyan
+Write-Host "  Provisioning Embedded Python ($PythonVer) + CUDA Runtime  " -ForegroundColor Cyan
+Write-Host "===========================================================" -ForegroundColor Cyan
 
 if (-not (Test-Path $RuntimeDir)) {
     New-Item -ItemType Directory -Path $RuntimeDir | Out-Null
@@ -42,7 +44,7 @@ if (-not (Test-Path $PythonExe)) {
     Remove-Item $GetPipPy -Force
 }
 
-Write-Host "Installing PyTorch (CUDA 12.1) & Audio Dependencies..." -ForegroundColor Yellow
+Write-Host "Installing PyTorch (CUDA 12.1) & VoiceForge Audio Dependencies..." -ForegroundColor Yellow
 & $PythonExe -m pip install --upgrade pip setuptools wheel --no-warn-script-location
 & $PythonExe -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121 --no-warn-script-location
 
@@ -56,30 +58,11 @@ $Packages = @(
 & $PythonExe -m pip install chatterbox-tts --no-deps --no-warn-script-location
 & $PythonExe -m pip install conformer diffusers omegaconf "librosa<1.0.0" s3tokenizer pyloudnorm pykakasi --no-warn-script-location
 
-# Pre-install isolated Chromium browser
 $BrowsersDir = Join-Path $RuntimeDir "playwright-browsers"
 $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
 & $PythonExe -m playwright install chromium
 
-# Automated Model Caching for standalone bundle
-Write-Host "Pre-caching Kokoro & Chatterbox-Turbo models into portable bundle..." -ForegroundColor Yellow
-$PreloadScript = @"
-from pathlib import Path
-from huggingface_hub import snapshot_download
-
-# Cache Chatterbox-Turbo locally
-cb_dir = Path('pretrained_models/chatterbox-turbo')
-cb_dir.mkdir(parents=True, exist_ok=True)
-snapshot_download(repo_id='ResembleAI/chatterbox-turbo', local_dir=str(cb_dir), token=False)
-
-# Cache Kokoro weights
-try:
-    from kokoro import KPipeline
-    KPipeline(lang_code='a', device='cpu')
-except Exception:
-    pass
-print('✓ Base models pre-cached.')
-"@
-& $PythonExe -c $PreloadScript
-
-Write-Host "✓ Portable Runtime Ready!" -ForegroundColor Green
+Write-Host "`n===========================================================" -ForegroundColor Green
+Write-Host "✓ Portable Runtime Setup Complete!" -ForegroundColor Green
+Write-Host "You can now download and manage models directly inside the app!" -ForegroundColor Cyan
+Write-Host "===========================================================" -ForegroundColor Green

@@ -1,4 +1,4 @@
-name: Build Full Standalone Portable Windows 11 Suite
+name: Build and Package Windows 11 Standalone
 
 on:
   push:
@@ -20,37 +20,31 @@ jobs:
       - name: Setup MSVC C++ Environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Compile Native VoiceForgeStudio.exe (With Option 4 Icon)
+      - name: Compile Native VoiceForgeStudio.exe (Option 4 Icon)
         shell: pwsh
         run: |
           .\build_and_sign.ps1
 
-      - name: Provision Standalone Portable Runtime & Models
-        shell: pwsh
-        run: |
-          .\setup_portable_runtime.ps1
-
-      - name: Package Complete Zero-Install Portable Bundle
+      - name: Package Standalone Distribution Bundle
         shell: pwsh
         run: |
           $Dist = "dist\VoiceForgeStudio"
           New-Item -ItemType Directory -Path $Dist -Force | Out-Null
           New-Item -ItemType Directory -Path "$Dist\output" -Force | Out-Null
           New-Item -ItemType Directory -Path "$Dist\browser_profile" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$Dist\pretrained_models" -Force | Out-Null
 
-          Copy-Item VoiceForgeStudio.exe, run_voiceforge.bat, icon.ico, config.json, filter_rules.json, README.md $Dist\
+          Copy-Item VoiceForgeStudio.exe, run_voiceforge.bat, setup.bat, setup_portable_runtime.ps1, icon.ico, config.json, filter_rules.json, README.md $Dist\
           Copy-Item app.py, chat_sources.py, engine_manager.py, kokoro_engine.py, audio_filter.py, scheduler.py $Dist\
           Copy-Item index.html, reader.html $Dist\
 
-          Copy-Item -Recurse runtime "$Dist\runtime"
-          Copy-Item -Recurse pretrained_models "$Dist\pretrained_models"
           if (Test-Path "voices\*") { Copy-Item -Recurse voices "$Dist\voices" }
 
-          Compress-Archive -Path "$Dist\*" -DestinationPath VoiceForgeStudio-Portable.zip -Force
+          Compress-Archive -Path "$Dist\*" -DestinationPath VoiceForgeStudio-Windows-x64.zip -Force
 
-      - name: Upload Standalone Portable Release
+      - name: Upload Windows Standalone Package
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceForgeStudio-Portable
-          path: VoiceForgeStudio-Portable.zip
+          name: VoiceForgeStudio-Windows-x64
+          path: VoiceForgeStudio-Windows-x64.zip
           retention-days: 14

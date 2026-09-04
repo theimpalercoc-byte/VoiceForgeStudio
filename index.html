@@ -1551,6 +1551,72 @@
       await loadKokoroLanguages();
     }
 
+    let activeModalModelId = null;
+
+    async function openManualInstructions(modelId) {
+      try {
+        activeModalModelId = modelId;
+        const res = await fetch(`/api/models/${modelId}/instructions`);
+        const d = await res.json();
+        
+        safeSetText("modal-model-title", `📦 Manual Install: ${d.name} (${d.approx_size})`);
+        const link = safeEl("modal-model-link");
+        if (link) link.href = d.manual_url;
+        
+        safeSetValue("modal-model-folder", d.folder_path);
+        
+        const statusBox = safeEl("modal-model-verify-status");
+        if (statusBox) statusBox.style.display = "none";
+        
+        openModal("manual-model-modal");
+      } catch (e) {
+        alert("Could not load model instructions: " + e.message);
+      }
+    }
+
+    function copyModalFolderPath() {
+      const input = safeEl("modal-model-folder");
+      if (input) {
+        navigator.clipboard.writeText(input.value);
+        alert("✓ Folder path copied to clipboard! Paste it into Windows File Explorer.");
+      }
+    }
+
+    async function verifyCurrentModalModel() {
+      if (!activeModalModelId) return;
+      const statusBox = safeEl("modal-model-verify-status");
+      if (statusBox) {
+        statusBox.style.display = "block";
+        statusBox.style.background = "rgba(56,189,248,0.15)";
+        statusBox.style.color = "#38bdf8";
+        statusBox.textContent = "Scanning folder for model files...";
+      }
+
+      try {
+        const res = await fetch(`/api/models/${activeModalModelId}/verify`, { method: "POST" });
+        const d = await res.json();
+
+        if (d.installed) {
+          if (statusBox) {
+            statusBox.style.background = "rgba(34,197,94,0.2)";
+            statusBox.style.color = "#4ade80";
+            statusBox.textContent = `✓ Model verified! Found ${d.size_mb} MB of valid files. Engine is now ready!`;
+          }
+          await loadModelStatus();
+        } else {
+          if (statusBox) {
+            statusBox.style.background = "rgba(239,68,68,0.2)";
+            statusBox.style.color = "#f87171";
+            statusBox.textContent = "❌ Model files not detected in this folder yet. Ensure the files finished copying, then click Verify again.";
+          }
+        }
+      } catch (e) {
+        if (statusBox) {
+          statusBox.textContent = "Error scanning folder: " + e.message;
+        }
+      }
+    }
+
     async function loadModelStatus() {
       try {
         const res = await fetch("/api/models/status");
@@ -1558,35 +1624,59 @@
         const grid = safeEl("models-status-grid");
         if (!grid) return;
         const models = d.models || {};
+
         grid.innerHTML = Object.values(models).map(m => {
-          const badge = m.installed 
-            ? `<span class="badge-pill" style="background:rgba(34,197,94,0.2); color:#4ade80;">✓ Installed (${m.size_mb > 0 ? m.size_mb + ' MB' : m.approx_size})</span>`
-            : `<span class="badge-pill" style="background:rgba(239,68,68,0.2); color:#f87171;">Not Installed (${m.approx_size})</span>`;
+          const isInstalled = m.installed;
+          const isDownloading = m.download_state === "downloading";
           
+          let badge = "";
+          if (isDownloading) {
+            badge = `<span class="badge-pill" style="background:rgba(234,179,8,0.2); color:#facc15;">⏳ Downloading in background...</span>`;
+          } else if (isInstalled) {
+            badge = `<span class="badge-pill" style="background:rgba(34,197,94,0.2); color:#4ade80;">✓ Installed (${m.size_mb > 0 ? m.size_mb + ' MB' : m.approx_size})</span>`;
+          } else {
+            badge = `<span class="badge-pill" style="background:rgba(239,68,68,0.2); color:#f87171;">Not Installed (${m.approx_size})</span>`;
+          }
+
           const activeTag = m.active 
             ? `<span style="font-size:0.7rem; color:#38bdf8; font-weight:700; margin-left:6px;">⚡ ACTIVE</span>` 
             : '';
 
-          const btn = m.installed
-            ? `<button class="btn btn-danger" style="padding:4px 10px; font-size:0.72rem;" onclick="deleteModel('${m.id}')" ${m.id === currentEngine ? 'disabled title="Switch engine first"' : ''}>🗑️ Remove</button>`
-            : `<button class="btn btn-forge" style="padding:4px 10px; font-size:0.72rem;" onclick="downloadModel('${m.id}')">⬇️ Download</button>`;
+          let actionButtons = "";
+          if (isDownloading) {
+            actionButtons = `<button class="btn btn-secondary" style="padding:4px 10px; font-size:0.72rem;" disabled>⏳ Downloading...</button>`;
+          } else if (isInstalled) {
+            actionButtons = `
+              <button class="btn btn-secondary" style="padding:4px 8px; font-size:0.72rem;" onclick="openManualInstructions('${m.id}')">📂 Folder</button>
+              <button class="btn btn-danger" style="padding:4px 10px; font-size:0.72rem;" onclick="deleteModel('${m.id}')" ${m.id === currentEngine ? 'disabled title="Switch active engine first"' : ''}>🗑️ Remove</button>
+            `;
+          } else {
+            actionButtons = `
+              <button class="btn btn-forge" style="padding:4px 10px; font-size:0.72rem;" onclick="downloadModel('${m.id}')">⬇️ Auto-Download</button>
+              <button class="btn btn-secondary" style="padding:4px 8px; font-size:0.72rem;" onclick="openManualInstructions('${m.id}')">📖 Offline / Manual</button>
+            `;
+          }
 
           return `
-            <div style="background:rgba(0,0,0,0.25); border:1px solid var(--glass-border); padding:12px; border-radius:10px; display:flex; flex-direction:column; justify-content:space-between; gap:8px;">
+            <div style="background:rgba(0,0,0,0.25); border:1px solid var(--glass-border); padding:12px; border-radius:10px; display:flex; flex-direction:column; justify-content:space-between; gap:10px;">
               <div>
                 <div style="font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:space-between;">
                   <span>${m.name} ${activeTag}</span>
                 </div>
                 <div style="font-size:0.75rem; color:var(--text-dim); margin-top:2px;">${m.description}</div>
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.05); padding-top:6px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px; flex-wrap:wrap; gap:6px;">
                 ${badge}
-                ${btn}
+                <div style="display:flex; gap:6px;">
+                  ${actionButtons}
+                </div>
               </div>
             </div>
           `;
         }).join("");
-      } catch (e) {}
+      } catch (e) {
+        console.error("loadModelStatus error:", e);
+      }
     }
 
     async function deleteModel(id) {
@@ -1647,5 +1737,43 @@
     loadEngineSettings();
     switchTab(localStorage.getItem("activeTab") || "tab-sources");
   </script>
+
+  <!-- Offline / Manual Model Instructions Modal -->
+  <div class="modal" id="manual-model-modal">
+    <div class="modal-content" style="max-width:650px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid var(--glass-border); padding-bottom:10px;">
+        <h3 id="modal-model-title" style="color:#fed7aa; font-size:1.15rem;">📦 Manual Model Installation</h3>
+        <button class="btn btn-secondary" style="padding:2px 8px;" onclick="closeModal('manual-model-modal')">✕</button>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:12px; font-size:0.85rem;">
+        <p style="color:var(--text-dim);">
+          If your computer is restricted, offline, or behind a firewall, you can download the model files directly using your web browser and place them into the folder below.
+        </p>
+
+        <div style="background:rgba(0,0,0,0.35); padding:12px; border-radius:10px; border:1px solid var(--glass-border);">
+          <b style="color:#38bdf8;">Step 1: Download Model Files via Browser</b><br>
+          <span style="font-size:0.8rem; color:var(--text-dim);">Open the official repository in your browser and download the weights:</span><br>
+          <a id="modal-model-link" href="#" target="_blank" class="btn btn-forge" style="margin-top:8px; display:inline-flex; padding:6px 14px; font-size:0.78rem;">🔗 Open Hugging Face Model Page</a>
+        </div>
+
+        <div style="background:rgba(0,0,0,0.35); padding:12px; border-radius:10px; border:1px solid var(--glass-border);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <b style="color:#fed7aa;">Step 2: Place Files into This Exact Folder:</b>
+            <button class="btn btn-secondary" style="padding:2px 8px; font-size:0.72rem;" onclick="copyModalFolderPath()">📋 Copy Path</button>
+          </div>
+          <input type="text" id="modal-model-folder" readonly style="margin-top:6px; font-family:monospace; font-size:0.78rem; background:rgba(0,0,0,0.5); color:#4ade80;">
+        </div>
+
+        <div id="modal-model-verify-status" style="font-size:0.82rem; padding:8px; border-radius:8px; display:none;"></div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; border-top:1px solid var(--glass-border); padding-top:12px;">
+        <button class="btn btn-secondary" onclick="closeModal('manual-model-modal')">Close</button>
+        <button class="btn btn-success" id="btn-verify-folder" onclick="verifyCurrentModalModel()">🔄 I Placed the Files — Verify Now</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
