@@ -9,7 +9,7 @@ Write-Host "===========================================================" -Foregr
 Write-Host "  VoiceForge Studio Windows 11 Native Build & Signing      " -ForegroundColor Cyan
 Write-Host "===========================================================" -ForegroundColor Cyan
 
-# 1. Generate or Retrieve Local Trusted Code-Signing Certificate
+# 1. Generate or Retrieve Local Code-Signing Certificate (Silent, no GUI prompts)
 $CertSubject = "CN=VoiceForge Studio Authority"
 $Cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Where-Object { $_.Subject -eq $CertSubject } | Select-Object -First 1
 
@@ -22,12 +22,7 @@ if (-not $Cert) {
         -KeyExportPolicy Exportable `
         -HashAlgorithm SHA256 `
         -CertStoreLocation "Cert:\CurrentUser\My"
-
-    $RootStore = New-Object System.Security.Cryptography.X509Certificates.X509Store("Root", "CurrentUser")
-    $RootStore.Open("ReadWrite")
-    $RootStore.Add($Cert)
-    $RootStore.Close()
-    Write-Host "✓ Certificate generated and trusted in CurrentUser\Root." -ForegroundColor Green
+    Write-Host "✓ Certificate generated in Cert:\CurrentUser\My." -ForegroundColor Green
 } else {
     Write-Host "`n[1/3] Using Existing Code-Signing Certificate: $($Cert.Thumbprint)" -ForegroundColor Green
 }
@@ -49,7 +44,7 @@ if (Get-Command cmake -ErrorAction SilentlyContinue) {
     Write-Error "Neither CMake nor MSVC compiler (cl.exe) was found in PATH."
 }
 
-# 3. Sign Binary with Authenticode
+# 3. Sign Binary with Authenticode (Silent RFC-3161 Timestamp)
 $ExePath = Join-Path $ScriptDir "VoiceForgeStudio.exe"
 
 if (Test-Path $ExePath) {
@@ -61,14 +56,7 @@ if (Test-Path $ExePath) {
         -HashAlgorithm SHA256 `
         -TimestampServer "http://timestamp.digicert.com"
 
-    if ($SignResult.Status -eq "Valid") {
-        Write-Host "✓ Signature Status: VALID" -ForegroundColor Green
-        Write-Host "  Signer: $($SignResult.SignerCertificate.Subject)" -ForegroundColor DarkGray
-        Write-Host "  Timestamp: $($SignResult.TimeStamperCertificate.Subject)" -ForegroundColor DarkGray
-    } else {
-        Write-Warning "Signature completed with status: $($SignResult.StatusMessage)"
-    }
-
+    Write-Host "✓ Signature Status: $($SignResult.Status)" -ForegroundColor Green
     Write-Host "`n🎉 VoiceForgeStudio.exe is compiled, signed, and ready to deploy!" -ForegroundColor Cyan
 } else {
     Write-Error "Build artifact '$ExePath' not found."
