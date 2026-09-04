@@ -26,6 +26,7 @@ if not exist runtime\python.exe (
     if exist runtime\python311._pth (
         echo import site>> runtime\python311._pth
         echo .>> runtime\python311._pth
+        echo ..>> runtime\python311._pth
         echo Lib>> runtime\python311._pth
         echo Lib\site-packages>> runtime\python311._pth
     )

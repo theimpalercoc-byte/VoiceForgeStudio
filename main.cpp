@@ -143,6 +143,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     fs::path playwrightBrowsers = runtimeDir / "playwright-browsers";
 
     SetEnvironmentVariableW(L"PYTHONUNBUFFERED", L"1");
+    SetEnvironmentVariableW(L"PYTHONPATH", baseDir.c_str());
     SetEnvironmentVariableW(L"PLAYWRIGHT_BROWSERS_PATH", playwrightBrowsers.c_str());
     SetEnvironmentVariableW(L"HF_HUB_DISABLE_SYMLINKS_WARNING", L"1");
 
