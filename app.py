@@ -741,15 +741,24 @@ def find_model_path(model_id: str) -> Optional[Path]:
     info = MODELS_CATALOG.get(model_id, {})
     repo = info.get("repo_id", "").replace("/", "--")
     
+    # Check local pretrained_models folder with alias support
+    dir_map = {
+        "chatterbox_nano": "chatterbox-turbo",
+        "cosyvoice2": "CosyVoice2-0.5B",
+        "qwen3_tts": "Qwen2.5-0.5B",
+        "kokoro": "Kokoro-82M"
+    }
+    target_name = dir_map.get(model_id, model_id)
+    local_check = BASE_DIR / "pretrained_models" / target_name
+    if local_check.exists() and any(local_check.iterdir()):
+        return local_check
+
+    # Check HuggingFace cache
     hf_hub = Path.home() / ".cache" / "huggingface" / "hub"
     if repo:
         hf_dir = hf_hub / f"models--{repo}"
         if hf_dir.exists():
             return hf_dir
-
-    local_check = BASE_DIR / "pretrained_models" / model_id
-    if local_check.exists():
-        return local_check
 
     return None
 
