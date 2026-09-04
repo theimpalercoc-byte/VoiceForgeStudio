@@ -1,13 +1,15 @@
-# Enforce TLS 1.2 and TLS 1.3 so Windows PowerShell never drops SSL downloads
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
-
-$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Definition }
-if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
-Set-Location $ScriptDir
-
-$ErrorActionPreference = "Stop"
+# Suppress slow PowerShell 5.1 progress GUI to speed up downloads 10x
+$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
 
 try {
+    # Enforce standard TLS 1.2 (Universally compatible with Windows PowerShell 5.1 and PS 7)
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+
+    $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Definition }
+    if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
+    Set-Location $ScriptDir
+
     Write-Host "===========================================================" -ForegroundColor Cyan
     Write-Host "  VoiceForge Studio — Portable Runtime & Library Setup     " -ForegroundColor Cyan
     Write-Host "===========================================================" -ForegroundColor Cyan
@@ -31,7 +33,6 @@ try {
         Expand-Archive -Path $ZipDest -DestinationPath $RuntimeDir -Force
         Remove-Item $ZipDest -Force
 
-        # Patch python311._pth to enable site-packages & pip
         $PthFile = Get-ChildItem -Path $RuntimeDir -Filter "*._pth" | Select-Object -First 1
         if ($PthFile) {
             $Content = Get-Content $PthFile.FullName
@@ -80,7 +81,10 @@ try {
     Start-Sleep -Seconds 2
 
 } catch {
-    Write-Host "`n[SETUP ERROR] $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "`n===========================================================" -ForegroundColor Red
+    Write-Host "  SETUP ENCOUNTERED AN ERROR:                              " -ForegroundColor Red
+    Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "===========================================================" -ForegroundColor Red
     Write-Host "`nPress Enter to exit..." -ForegroundColor Yellow
     Read-Host
     exit 1
