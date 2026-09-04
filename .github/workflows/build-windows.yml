@@ -21,21 +21,25 @@ jobs:
         run: |
           .\build_and_sign.ps1
 
-      - name: Verify Executable Signature
-        shell: pwsh
-        run: |
-          Get-AuthenticodeSignature .\VoiceForgeStudio.exe | Format-List
-
       - name: Package Distribution Bundle
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path dist\VoiceForgeStudio -Force | Out-Null
-          Copy-Item VoiceForgeStudio.exe dist\VoiceForgeStudio\
-          Copy-Item app.py, chat_sources.py, engine_manager.py, kokoro_engine.py, audio_filter.py, scheduler.py dist\VoiceForgeStudio\
-          Copy-Item index.html, reader.html, config.json, filter_rules.json, README.md dist\VoiceForgeStudio\
-          Copy-Item -Recurse voices, output, browser_profile dist\VoiceForgeStudio\
-          Copy-Item setup_portable_runtime.ps1, run_voiceforge.bat dist\VoiceForgeStudio\
-          Compress-Archive -Path dist\VoiceForgeStudio\* -DestinationPath VoiceForgeStudio-Windows-x64.zip -Force
+          $Dist = "dist\VoiceForgeStudio"
+          New-Item -ItemType Directory -Path $Dist -Force | Out-Null
+          New-Item -ItemType Directory -Path "$Dist\output" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$Dist\browser_profile" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$Dist\voices" -Force | Out-Null
+
+          Copy-Item VoiceForgeStudio.exe $Dist\
+          Copy-Item app.py, chat_sources.py, engine_manager.py, kokoro_engine.py, audio_filter.py, scheduler.py $Dist\
+          Copy-Item index.html, reader.html, config.json, filter_rules.json, README.md $Dist\
+          Copy-Item setup_portable_runtime.ps1, run_voiceforge.bat $Dist\
+
+          if (Test-Path "voices\*") {
+              Copy-Item -Recurse voices\* "$Dist\voices\" -Force
+          }
+
+          Compress-Archive -Path "$Dist\*" -DestinationPath VoiceForgeStudio-Windows-x64.zip -Force
 
       - name: Upload Windows Standalone Artifact
         uses: actions/upload-artifact@v4
