@@ -310,6 +310,16 @@ app.add_middleware(
 )
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
+
+from fastapi.responses import FileResponse
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def serve_favicon():
+    fav = BASE_DIR / "icon.ico"
+    if fav.exists():
+        return FileResponse(fav)
+    return Response(status_code=204)
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     return HTMLResponse(content=(BASE_DIR / "index.html").read_text(encoding="utf-8"))
