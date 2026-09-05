@@ -35,6 +35,43 @@ from kokoro_engine import kokoro_engine, KOKORO_VOICES
 
 logger = logging.getLogger("EngineManager")
 
+# -------------------------------------------------------------
+# Upstream Chatterbox Bugfix (Issue #499): Prevent float64/Double promotion
+# -------------------------------------------------------------
+try:
+    from chatterbox.tts_turbo import ChatterboxTurboTTS
+
+    if hasattr(ChatterboxTurboTTS, "norm_loudness"):
+        orig_norm = ChatterboxTurboTTS.norm_loudness
+        def patched_norm(self, wav, *args, **kwargs):
+            res = orig_norm(self, wav, *args, **kwargs)
+            if isinstance(res, np.ndarray):
+                return res.astype(np.float32)
+            elif isinstance(res, torch.Tensor):
+                return res.float()
+            return res
+        ChatterboxTurboTTS.norm_loudness = patched_norm
+
+    if hasattr(ChatterboxTurboTTS, "prepare_conditionals"):
+        orig_prep = ChatterboxTurboTTS.prepare_conditionals
+        def patched_prep(self, *args, **kwargs):
+            res = orig_prep(self, *args, **kwargs)
+            if hasattr(self, "conds") and self.conds is not None:
+                def to_f32(obj):
+                    if isinstance(obj, torch.Tensor): return obj.float()
+                    elif isinstance(obj, np.ndarray): return obj.astype(np.float32)
+                    elif isinstance(obj, list): return [to_f32(x) for x in obj]
+                    elif isinstance(obj, tuple): return tuple(to_f32(x) for x in obj)
+                    elif isinstance(obj, dict): return {k: to_f32(v) for k, v in obj.items()}
+                    return obj
+                self.conds = to_f32(self.conds)
+            return res
+        ChatterboxTurboTTS.prepare_conditionals = patched_prep
+    logger.info("✓ Chatterbox-Turbo Float32 dtype patch active.")
+except Exception as e:
+    logger.debug(f"Chatterbox patch notice: {e}")
+
+
 BASE_DIR = Path(__file__).resolve().parent
 VOICES_DIR = BASE_DIR / "voices"
 OUTPUT_DIR = BASE_DIR / "output"
