@@ -80,6 +80,28 @@ CONFIG_FILE = BASE_DIR / "config.json"
 VOICES_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+
+def find_chatterbox_weights() -> Optional[Path]:
+    """Finds Chatterbox weights in local pretrained_models or HuggingFace hub snapshots."""
+    # 1. Local pretrained_models folder
+    p1 = BASE_DIR / "pretrained_models" / "chatterbox-turbo"
+    if p1.exists() and (any(p1.glob("*.safetensors")) or any(p1.glob("*.pt"))):
+        return p1
+
+    # 2. HuggingFace Hub Cache (scans snapshots)
+    hf_hub = Path.home() / ".cache" / "huggingface" / "hub"
+    if hf_hub.exists():
+        for d in hf_hub.glob("models--ResembleAI--chatterbox*"):
+            snaps = d / "snapshots"
+            if snaps.exists():
+                for s in snaps.iterdir():
+                    if any(s.glob("*.safetensors")) or any(s.glob("*.pt")):
+                        return s
+            if any(d.glob("*.safetensors")):
+                return d
+
+    return None
+
 def find_voice_file(voice_name: str) -> Optional[Path]:
     """Case-insensitive voice finder supporting .vfs, .wav, .mp3."""
     v_clean = voice_name.lower().replace("!", "").strip()
@@ -188,13 +210,17 @@ class ChatterboxNanoEngine(BaseTTSEngine):
                 if dev == "cuda" and not torch.cuda.is_available():
                     dev = "cpu"
 
-                local_dir = BASE_DIR / "pretrained_models" / "chatterbox-turbo"
-                if local_dir.exists() and any(local_dir.iterdir()):
-                    logger.info(f"[Chatterbox-Turbo] Loading weights from {local_dir} on {dev}...")
-                    self.model = ChatterboxTurboTTS.from_local(ckpt_dir=str(local_dir), device=dev)
+                weights_dir = find_chatterbox_weights()
+                if weights_dir is not None:
+                    logger.info(f"[Chatterbox-Turbo] Found weights at {weights_dir}. Loading via from_local on {dev}...")
+                    self.model = ChatterboxTurboTTS.from_local(ckpt_dir=str(weights_dir), device=dev)
                 else:
-                    logger.info(f"[Chatterbox-Turbo] Loading pre-trained model on {dev}...")
-                    self.model = ChatterboxTurboTTS.from_pretrained(device=dev)
+                    logger.info(f"[Chatterbox-Turbo] Local weights not found. Downloading to pretrained_models on {dev}...")
+                    from huggingface_hub import snapshot_download
+                    target = BASE_DIR / "pretrained_models" / "chatterbox-turbo"
+                    target.mkdir(parents=True, exist_ok=True)
+                    snapshot_download(repo_id="ResembleAI/chatterbox-turbo", local_dir=str(target), local_dir_use_symlinks=False, token=None)
+                    self.model = ChatterboxTurboTTS.from_local(ckpt_dir=str(target), device=dev)
 
                 self.sr = getattr(self.model, "sr", 24000)
                 logger.info("✓ Chatterbox-Turbo model ready for zero-shot voice cloning.")

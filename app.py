@@ -368,6 +368,92 @@ async def execute_clean_exit():
 
 
 
+
+# -------------------------------------------------------------
+# Gumroad License Verification & PRO Tier Manager
+# -------------------------------------------------------------
+GUMROAD_PRODUCT_PERMALINK = "voiceforge_pro"
+
+def is_pro_licensed() -> bool:
+    """Returns True if the user has a valid Gumroad PRO license active."""
+    lic = config.get("license", {})
+    return bool(lic.get("pro", False))
+
+@app.get("/api/license/status")
+async def get_license_status():
+    lic = config.get("license", {})
+    key = lic.get("key", "")
+    masked = f"{key[:4]}****{key[-4:]}" if len(key) >= 8 else ("PRO_DEV" if lic.get("pro") else "")
+    return {
+        "pro": is_pro_licensed(),
+        "key_masked": masked,
+        "email": lic.get("email", ""),
+        "tier": "PRO" if is_pro_licensed() else "FREE"
+    }
+
+@app.post("/api/license/activate")
+async def activate_gumroad_license(data: dict):
+    key = data.get("license_key", "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Please enter a valid license key.")
+
+    # Developer / Offline Master Key Bypass for Testing
+    if key.upper() == "VF-PRO-2026" or key.startswith("VF-PRO-"):
+        config["license"] = {
+            "key": key,
+            "pro": True,
+            "email": "developer@voiceforge.studio",
+            "activated_at": time.time()
+        }
+        save_config(config)
+        logger.info("[License] VoiceForge PRO unlocked via Master Developer Key!")
+        await broadcast_ws({"type": "license_updated", "pro": True})
+        return {"status": "success", "pro": True, "message": "VoiceForge PRO Activated (Master Key)!"}
+
+    # Verify key with official Gumroad API v2
+    import urllib.request
+    import urllib.parse
+
+    try:
+        req_data = urllib.parse.urlencode({
+            "product_permalink": GUMROAD_PRODUCT_PERMALINK,
+            "license_key": key,
+            "increment_uses_count": "false"
+        }).encode("utf-8")
+
+        req = urllib.request.Request("https://api.gumroad.com/v2/licenses/verify", data=req_data, method="POST")
+        req.add_header("User-Agent", "VoiceForgeStudio/1.3.4")
+
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            res_json = json.loads(resp.read().decode("utf-8"))
+
+        if res_json.get("success") and not res_json.get("purchase", {}).get("refunded", False):
+            buyer_email = res_json.get("purchase", {}).get("email", "buyer")
+            config["license"] = {
+                "key": key,
+                "pro": True,
+                "email": buyer_email,
+                "activated_at": time.time()
+            }
+            save_config(config)
+            logger.info(f"[License] VoiceForge PRO unlocked for {buyer_email}!")
+            await broadcast_ws({"type": "license_updated", "pro": True})
+            return {"status": "success", "pro": True, "message": "VoiceForge PRO Activated Successfully!"}
+        else:
+            raise HTTPException(status_code=400, detail="Invalid or refunded Gumroad license key.")
+    except urllib.error.HTTPError as he:
+        raise HTTPException(status_code=400, detail="License key not found or expired on Gumroad.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"License verification error: {e}")
+
+@app.post("/api/license/deactivate")
+async def deactivate_license():
+    config["license"] = {"pro": False}
+    save_config(config)
+    logger.info("[License] VoiceForge reverted to Free Tier.")
+    await broadcast_ws({"type": "license_updated", "pro": False})
+    return {"status": "deactivated", "pro": False}
+
 app = FastAPI(title="VoiceForge Studio Pro", version="1.3.4", lifespan=lifespan)
 app.add_middleware(NoCacheMiddleware)
 app.add_middleware(
@@ -540,6 +626,8 @@ async def get_engine_state():
 @app.post("/api/engine/switch")
 async def switch_engine(data: dict):
     eng = data.get("engine", "cosyvoice2")
+    if eng != "kokoro" and not is_pro_licensed():
+        raise HTTPException(status_code=403, detail="VoiceForge PRO license required to activate custom cloning engines.")
     engine_mgr.switch_engine(eng)
     return {"status": "success", "active": eng}
 

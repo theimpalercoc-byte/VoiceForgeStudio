@@ -146,6 +146,7 @@
           <span id="audio-unlock-icon">⚠️</span> <span id="audio-unlock-text">Click to Enable Audio</span>
         </button>
         <span id="now-speaking-indicator" style="display:none; font-size:0.78rem; color:#4ade80; font-weight:700;">🔊 Speaking...</span>
+        <button id="btn-pro-badge" class="btn" style="background:rgba(245,158,11,0.2); border:1px solid #f59e0b; color:#fbbf24; font-weight:700; font-size:0.78rem;" onclick="openModal('license-modal')">⭐ Upgrade to PRO</button>
         <button class="btn btn-secondary" onclick="switchTab('tab-sources')">📡 Sources</button>
         <button class="btn btn-secondary" onclick="switchTab('tab-audio')">⚙️ Settings</button>
         <button class="btn btn-danger" style="font-weight:700;" onclick="shutdownStudio()">🛑 Exit Studio</button>
@@ -589,6 +590,80 @@
         </div>
       `;
       setTimeout(() => { window.close(); }, 800);
+    }
+
+    
+    let isProActive = false;
+
+    async function checkLicenseStatus() {
+      try {
+        const res = await fetch("/api/license/status");
+        const d = await res.json();
+        isProActive = d.pro === true;
+        updateProUI(isProActive, d.key_masked);
+      } catch (e) {}
+    }
+
+    function updateProUI(isPro, keyMasked) {
+      const btn = safeEl("btn-pro-badge");
+      if (btn) {
+        if (isPro) {
+          btn.style.background = "rgba(34,197,94,0.2)";
+          btn.style.borderColor = "#22c55e";
+          btn.style.color = "#4ade80";
+          btn.innerHTML = `⭐ PRO ACTIVE`;
+        } else {
+          btn.style.background = "rgba(245,158,11,0.2)";
+          btn.style.borderColor = "#f59e0b";
+          btn.style.color = "#fbbf24";
+          btn.innerHTML = `⭐ Upgrade to PRO`;
+        }
+      }
+    }
+
+    async function activateLicenseKey() {
+      const input = safeEl("gumroad-license-input");
+      const statusBox = safeEl("license-status-msg");
+      if (!input || !input.value.trim()) return alert("Please enter your Gumroad license key.");
+
+      if (statusBox) {
+        statusBox.style.display = "block";
+        statusBox.style.background = "rgba(56,189,248,0.15)";
+        statusBox.style.color = "#38bdf8";
+        statusBox.textContent = "Verifying license key with Gumroad...";
+      }
+
+      try {
+        const res = await fetch("/api/license/activate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ license_key: input.value.trim() })
+        });
+        const d = await res.json();
+
+        if (res.ok && d.pro) {
+          if (statusBox) {
+            statusBox.style.background = "rgba(34,197,94,0.2)";
+            statusBox.style.color = "#4ade80";
+            statusBox.textContent = `✓ ${d.message}`;
+          }
+          await checkLicenseStatus();
+          await loadModelStatus();
+          setTimeout(() => closeModal("license-modal"), 1200);
+        } else {
+          if (statusBox) {
+            statusBox.style.background = "rgba(239,68,68,0.2)";
+            statusBox.style.color = "#f87171";
+            statusBox.textContent = d.detail || "Invalid license key.";
+          }
+        }
+      } catch (e) {
+        if (statusBox) {
+          statusBox.style.background = "rgba(239,68,68,0.2)";
+          statusBox.style.color = "#f87171";
+          statusBox.textContent = "Connection error verifying license: " + e.message;
+        }
+      }
     }
 
     function safeEl(id) { return document.getElementById(id); }
@@ -1807,7 +1882,7 @@
       ws.onclose = () => setTimeout(connectLiveWS, 3000);
     }
 
-    connectLiveWS();
+    connectLiveWS(); checkLicenseStatus();
     loadVoices();
     loadEngineSettings();
     switchTab(localStorage.getItem("activeTab") || "tab-sources");
@@ -1846,6 +1921,59 @@
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; border-top:1px solid var(--glass-border); padding-top:12px;">
         <button class="btn btn-secondary" onclick="closeModal('manual-model-modal')">Close</button>
         <button class="btn btn-success" id="btn-verify-folder" onclick="verifyCurrentModalModel()">🔄 I Placed the Files — Verify Now</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Gumroad PRO License Modal -->
+  <div class="modal" id="license-modal">
+    <div class="modal-content" style="max-width:560px; background:#0f172a; border:1px solid #f59e0b;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid var(--glass-border); padding-bottom:10px;">
+        <h3 style="color:#fbbf24; font-size:1.2rem; display:flex; align-items:center; gap:8px;">
+          <span>⭐</span> VoiceForge Studio PRO License
+        </h3>
+        <button class="btn btn-secondary" style="padding:2px 8px;" onclick="closeModal('license-modal')">✕</button>
+      </div>
+
+      <div style="font-size:0.85rem; color:#cbd5e1; display:flex; flex-direction:column; gap:12px;">
+        <p>Unlock zero-shot voice cloning, custom model engines, and voice creation with your Gumroad license key.</p>
+        
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div style="background:rgba(255,255,255,0.04); border:1px solid var(--glass-border); padding:10px; border-radius:10px;">
+            <b style="color:#4ade80;">🌸 FREE VERSION</b>
+            <ul style="font-size:0.75rem; color:#94a3b8; margin-top:6px; padding-left:16px;">
+              <li>Kokoro-82M (All 54 Voices)</li>
+              <li>Multicast Live Chat Ingest</li>
+              <li>OBS Chroma-Key HUD</li>
+              <li>Timed Announcements</li>
+            </ul>
+          </div>
+          <div style="background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); padding:10px; border-radius:10px;">
+            <b style="color:#fbbf24;">🚀 PRO VERSION</b>
+            <ul style="font-size:0.75rem; color:#fed7aa; margin-top:6px; padding-left:16px;">
+              <li>Chatterbox-Turbo Cloning</li>
+              <li>CosyVoice 2 Expressive TTS</li>
+              <li>Qwen3-TTS Multi-Emotion</li>
+              <li>Custom .VFS Audio Uploads</li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="margin-top:4px;">
+          <label style="font-size:0.8rem; color:#fed7aa; font-weight:700;">ENTER GUMROAD LICENSE KEY:</label>
+          <input type="text" id="gumroad-license-input" placeholder="e.g. XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX" style="margin-top:6px; font-family:monospace;">
+        </div>
+
+        <div id="license-status-msg" style="font-size:0.82rem; padding:8px; border-radius:8px; display:none;"></div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; border-top:1px solid var(--glass-border); padding-top:12px;">
+        <a href="https://gumroad.com" target="_blank" style="font-size:0.78rem; color:#38bdf8; text-decoration:none;">🛒 Buy PRO Key on Gumroad</a>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary" onclick="closeModal('license-modal')">Cancel</button>
+          <button class="btn btn-forge" style="background:linear-gradient(135deg,#f59e0b,#f43f5e);" onclick="activateLicenseKey()">⭐ Activate PRO</button>
+        </div>
       </div>
     </div>
   </div>
