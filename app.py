@@ -1,9 +1,3 @@
-import sys
-from pathlib import Path
-BASE_DIR = Path(__file__).resolve().parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
-
 import io
 import os
 import sys
@@ -15,11 +9,18 @@ import subprocess
 import logging
 import shutil
 import webbrowser
+import urllib.request
+import urllib.parse
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
 
-# --- ARM64 / Windows Compatibility Watermarker Patch ---
+# 1. Force root directory into sys.path
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+# 2. ARM64 / Windows Compatibility Watermarker Patch
 class DummyWatermarker:
     def __init__(self, *args, **kwargs): pass
     def apply_watermark(self, wav, sample_rate=None, *args, **kwargs): return wav
@@ -38,12 +39,12 @@ except ImportError:
 import torch
 import soundfile as sf
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from engine_manager import engine_mgr, VOICES_DIR, OUTPUT_DIR, parse_segments, adjust_speed
+from engine_manager import engine_mgr, VOICES_DIR, OUTPUT_DIR, parse_segments, adjust_speed, find_voice_file
 from audio_filter import audio_filter
 from scheduler import scheduler
 from chat_sources import ChatSourceManager
@@ -51,33 +52,12 @@ from chat_sources import ChatSourceManager
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s")
 logger = logging.getLogger("VoiceForge")
 
-# -------------------------------------------------------------
-# Real-Time WebSocket Log Streamer for In-App Live Terminal Bar
-# -------------------------------------------------------------
-class LiveWebSocketLogHandler(logging.Handler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            if active_websockets:
-                payload = {"type": "log_event", "text": msg, "level": record.levelname}
-                for ws in list(active_websockets):
-                    try: asyncio.create_task(ws.send_json(payload))
-                    except Exception: pass
-        except Exception:
-            pass
-
-ws_log_handler = LiveWebSocketLogHandler()
-ws_log_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
-logging.getLogger().addHandler(ws_log_handler)
-
-
-BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "stream_reading": True,
     "stream": {"default_voice": "swifty", "read_mode": "all"},
-    "engine": {"active": "cosyvoice2", "device": "cuda" if torch.cuda.is_available() else "cpu", "compile": False},
+    "engine": {"active": "chatterbox_nano", "device": "cuda" if torch.cuda.is_available() else "cpu", "compile": False},
     "memory": {"tier": "vram" if torch.cuda.is_available() else "ram", "max_cached_voices": 50},
     "test_phrase": "Hello! This is [voice] testing in-memory speed on VoiceForge.",
     "engine_params": {
@@ -87,15 +67,8 @@ DEFAULT_CONFIG = {
         "kokoro": {"speed": 1.0}
     },
     "kokoro_languages": {
-        "en_us": True,
-        "en_gb": True,
-        "es": False,
-        "fr": False,
-        "it": False,
-        "ja": False,
-        "pt": False,
-        "hi": False,
-        "zh": False
+        "en_us": True, "en_gb": True, "es": False, "fr": False,
+        "it": False, "ja": False, "pt": False, "hi": False, "zh": False
     },
     "audio": {"volume": 85, "default_speed": 1.0, "output_dir": "output/", "muted": False},
     "reader": {"color": "#00FF00", "font": "Impact", "size": 32, "text_color": "#FFFFFF"},
@@ -103,7 +76,8 @@ DEFAULT_CONFIG = {
         {"id": "c1", "name": "!hello", "voice": "ron", "response": "Hey everyone, welcome to the live stream!", "cooldown": 10, "enabled": True}
     ],
     "sources": [],
-    "voice_profiles": {}
+    "voice_profiles": {},
+    "license": {"pro": False}
 }
 
 def load_config() -> dict:
@@ -127,6 +101,31 @@ active_websockets: List[WebSocket] = []
 reader_websockets: List[WebSocket] = []
 source_popout_ws: Dict[str, List[WebSocket]] = {}
 chat_history: List[Dict[str, Any]] = []
+model_download_status: Dict[str, str] = {}
+
+# 3. Real-Time WebSocket Log Broadcaster for In-App Live Terminal Bar
+class LiveWebSocketLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            if active_websockets:
+                payload = {"type": "log_event", "text": msg, "level": record.levelname}
+                for ws in list(active_websockets):
+                    try: asyncio.create_task(ws.send_json(payload))
+                    except Exception: pass
+        except Exception:
+            pass
+
+ws_log_handler = LiveWebSocketLogHandler()
+ws_log_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+logging.getLogger().addHandler(ws_log_handler)
+
+# 4. Gumroad PRO License State Checker
+GUMROAD_PRODUCT_PERMALINK = "voiceforge_pro"
+
+def is_pro_licensed() -> bool:
+    lic = config.get("license", {})
+    return bool(lic.get("pro", False))
 
 async def broadcast_ws(event: dict):
     for ws in list(active_websockets):
@@ -141,19 +140,34 @@ async def broadcast_reader(event: dict):
 async def auto_open_browser():
     await asyncio.sleep(1.2)
     try:
-        import subprocess
-        logger.info("[Auto-Launch] Launching VoiceForge Desktop App Window...")
         edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
         chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-
         if os.path.exists(edge_path):
             subprocess.Popen([edge_path, "--app=http://localhost:8080", "--window-size=1400,900"])
         elif os.path.exists(chrome_path):
             subprocess.Popen([chrome_path, "--app=http://localhost:8080", "--window-size=1400,900"])
         else:
             webbrowser.open("http://localhost:8080")
-    except Exception as e:
+    except Exception:
         webbrowser.open("http://localhost:8080")
+
+async def delayed_shutdown_check():
+    await asyncio.sleep(8)
+    if len(active_websockets) == 0 and len(reader_websockets) == 0:
+        logger.info("[Auto-Shutdown] All UI windows closed. Shutting down VoiceForge...")
+        await execute_clean_exit()
+
+async def execute_clean_exit():
+    try:
+        scheduler.stop()
+        if chat_sources and chat_sources.context:
+            await chat_sources.context.close()
+        if chat_sources and chat_sources.playwright:
+            await chat_sources.playwright.stop()
+    except Exception:
+        pass
+    logger.info("[Shutdown] Complete. Releasing port 8080.")
+    os._exit(0)
 
 async def handle_unified_chat(platform: str, channel: str, sender: str, message: str, color: str = None, source_id: str = "main", is_duplicate: bool = False):
     ts = time.strftime("%H:%M:%S")
@@ -200,8 +214,6 @@ async def handle_unified_chat(platform: str, channel: str, sender: str, message:
         await broadcast_ws({"type": "filter_event", "data": {"time": ts, "source": platform, "sender": sender, "message": message, "reason": reason}})
         return
 
-
-    # Moderation Check
     blocked, reason = audio_filter.should_block({"sender": sender, "message": message, "raw_message": message, "platform": platform})
     if blocked:
         audio_filter.log_filtered(chat_item, reason)
@@ -210,7 +222,7 @@ async def handle_unified_chat(platform: str, channel: str, sender: str, message:
 
     vol = 0.0 if config["audio"].get("muted", False) else (config["audio"].get("volume", 85) / 100.0)
 
-    # 1. Custom Viewer Commands (!hello, etc.)
+    # 1. Custom Viewer Commands
     first_word = message.strip().split()[0].lower() if message.strip() else ""
     matched_cmd = next((c for c in config.get("commands", []) if c["name"].lower() == first_word and c.get("enabled", True)), None)
     if matched_cmd:
@@ -233,14 +245,14 @@ async def handle_unified_chat(platform: str, channel: str, sender: str, message:
 
     if message.startswith("!"):
         import re
-        tag_match = re.match(r"^!([a-zA-Z0-9_\-]+)(?:[-–_\s]+(\d*\.?\d+))?\s*(.*)$", message)
+        tag_match = re.match(r"^!([a-zA-Z0-9_]+)(?:[-_](\d*\.?\d+))?\s*(.*)$", message)
         if tag_match:
             candidate = tag_match.group(1).lower()
             speed_val = tag_match.group(2)
-            if candidate in all_available:
+            speech_text = tag_match.group(3).strip()
+            if candidate in all_available or find_voice_file(candidate):
                 matched_voice = candidate
                 speed_tag = f"-{speed_val}" if speed_val else ""
-                speech_text = tag_match.group(3).strip()
             else:
                 cleaned = re.sub(r"^!+", "", message)
                 speech_text = cleaned.strip()
@@ -250,7 +262,6 @@ async def handle_unified_chat(platform: str, channel: str, sender: str, message:
     if not speech_text:
         return
 
-    # 3. Queue Speech
     if matched_voice:
         await tts_queue.put({"text": f"!{matched_voice}{speed_tag} {speech_text}", "sender": sender, "platform": platform, "volume": vol})
     elif read_mode == "all":
@@ -341,43 +352,43 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
             response.headers["Expires"] = "0"
         return response
 
+# -------------------------------------------------------------
+# FastAPI App Instantiation (Created BEFORE any routes)
+# -------------------------------------------------------------
+app = FastAPI(title="VoiceForge Studio Pro", version="1.3.4", lifespan=lifespan)
+app.add_middleware(NoCacheMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
 # -------------------------------------------------------------
-# Clean Desktop Application Lifecycle & Auto-Shutdown
+# Application Routes
 # -------------------------------------------------------------
-shutdown_timer_task = None
+@app.get("/", response_class=HTMLResponse)
+async def serve_index():
+    return HTMLResponse(content=(BASE_DIR / "index.html").read_text(encoding="utf-8"))
 
-async def delayed_shutdown_check():
-    """Shuts down server automatically if all UI windows have been closed."""
-    await asyncio.sleep(8)
-    if len(active_websockets) == 0 and len(reader_websockets) == 0:
-        logger.info("[Auto-Shutdown] All application windows closed. Shutting down VoiceForge...")
-        await execute_clean_exit()
+@app.get("/reader", response_class=HTMLResponse)
+async def serve_reader():
+    return HTMLResponse(content=(BASE_DIR / "reader.html").read_text(encoding="utf-8"))
 
-async def execute_clean_exit():
-    try:
-        scheduler.stop()
-        if chat_sources and chat_sources.context:
-            await chat_sources.context.close()
-        if chat_sources and chat_sources.playwright:
-            await chat_sources.playwright.stop()
-    except Exception:
-        pass
-    logger.info("[Shutdown] Complete. Releasing port 8080 and exiting.")
-    os._exit(0)
+@app.get("/favicon.ico", include_in_schema=False)
+async def serve_favicon():
+    fav = BASE_DIR / "icon.ico"
+    if fav.exists():
+        return FileResponse(fav)
+    return Response(status_code=204)
 
-
-
-
-# -------------------------------------------------------------
-# Gumroad License Verification & PRO Tier Manager
-# -------------------------------------------------------------
-GUMROAD_PRODUCT_PERMALINK = "voiceforge_pro"
-
-def is_pro_licensed() -> bool:
-    """Returns True if the user has a valid Gumroad PRO license active."""
-    lic = config.get("license", {})
-    return bool(lic.get("pro", False))
+@app.post("/api/shutdown")
+async def manual_shutdown_endpoint():
+    logger.info("[Shutdown] Received manual exit signal from UI.")
+    asyncio.create_task(execute_clean_exit())
+    return {"status": "shutting_down"}
 
 @app.get("/api/license/status")
 async def get_license_status():
@@ -397,7 +408,6 @@ async def activate_gumroad_license(data: dict):
     if not key:
         raise HTTPException(status_code=400, detail="Please enter a valid license key.")
 
-    # Developer / Offline Master Key Bypass for Testing
     if key.upper() == "VF-PRO-2026" or key.startswith("VF-PRO-"):
         config["license"] = {
             "key": key,
@@ -409,10 +419,6 @@ async def activate_gumroad_license(data: dict):
         logger.info("[License] VoiceForge PRO unlocked via Master Developer Key!")
         await broadcast_ws({"type": "license_updated", "pro": True})
         return {"status": "success", "pro": True, "message": "VoiceForge PRO Activated (Master Key)!"}
-
-    # Verify key with official Gumroad API v2
-    import urllib.request
-    import urllib.parse
 
     try:
         req_data = urllib.parse.urlencode({
@@ -441,7 +447,7 @@ async def activate_gumroad_license(data: dict):
             return {"status": "success", "pro": True, "message": "VoiceForge PRO Activated Successfully!"}
         else:
             raise HTTPException(status_code=400, detail="Invalid or refunded Gumroad license key.")
-    except urllib.error.HTTPError as he:
+    except urllib.error.HTTPError:
         raise HTTPException(status_code=400, detail="License key not found or expired on Gumroad.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"License verification error: {e}")
@@ -453,42 +459,6 @@ async def deactivate_license():
     logger.info("[License] VoiceForge reverted to Free Tier.")
     await broadcast_ws({"type": "license_updated", "pro": False})
     return {"status": "deactivated", "pro": False}
-
-app = FastAPI(title="VoiceForge Studio Pro", version="1.3.4", lifespan=lifespan)
-app.add_middleware(NoCacheMiddleware)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
-
-@app.post("/api/shutdown")
-async def manual_shutdown_endpoint():
-    logger.info("[Shutdown] Received manual exit signal from UI.")
-    asyncio.create_task(execute_clean_exit())
-    return {"status": "shutting_down"}
-
-
-
-from fastapi.responses import FileResponse
-
-@app.get("/favicon.ico", include_in_schema=False)
-async def serve_favicon():
-    fav = BASE_DIR / "icon.ico"
-    if fav.exists():
-        return FileResponse(fav)
-    return Response(status_code=204)
-
-@app.get("/", response_class=HTMLResponse)
-async def serve_index():
-    return HTMLResponse(content=(BASE_DIR / "index.html").read_text(encoding="utf-8"))
-
-@app.get("/reader", response_class=HTMLResponse)
-async def serve_reader():
-    return HTMLResponse(content=(BASE_DIR / "reader.html").read_text(encoding="utf-8"))
 
 @app.get("/api/sources")
 async def get_all_sources():
@@ -692,7 +662,6 @@ async def get_voices():
     active_eng = engine_mgr.get_active()
     cloned_voices = sorted(list(active_eng.voice_audio_cache.keys()))
     kokoro_voices = sorted(list(set(KOKORO_VOICES.keys())))
-
     all_voices = cloned_voices + [v for v in kokoro_voices if v not in cloned_voices]
     return {
         "voices": all_voices,
@@ -707,24 +676,18 @@ async def preview_voice(name: str, phrase: Optional[str] = None):
     from kokoro_engine import KOKORO_VOICES
     v_clean = name.replace("!", "").lower().strip()
 
-    # Determine which engine will actually speak
     if v_clean in KOKORO_VOICES:
         active_model_label = "Kokoro 82M"
     else:
         eng_name = engine_mgr.active_engine_name
-        if eng_name == "chatterbox_nano":
-            active_model_label = "Chatterbox Turbo"
-        elif eng_name == "cosyvoice2":
-            active_model_label = "CosyVoice 2"
-        elif eng_name == "qwen3_tts":
-            active_model_label = "Qwen3 TTS"
-        else:
-            active_model_label = "Kokoro 82M"
+        if eng_name == "chatterbox_nano": active_model_label = "Chatterbox Turbo"
+        elif eng_name == "cosyvoice2": active_model_label = "CosyVoice 2"
+        elif eng_name == "qwen3_tts": active_model_label = "Qwen3 TTS"
+        else: active_model_label = "Kokoro 82M"
 
     if phrase and phrase.strip() and "[voice]" not in phrase:
         text = phrase.strip()
     else:
-        # Verbal model announcement so you always hear which AI engine generated the voice
         text = f"Hello! This is {name.capitalize()}, running live on {active_model_label}."
 
     logger.info(f"[Voice Preview] Synthesizing '!{name}' using active engine [{active_model_label}]...")
@@ -884,7 +847,7 @@ async def delete_command(item_id: str):
     return {"status": "deleted"}
 
 # -------------------------------------------------------------
-# Model Manager API (Status, Download, Delete)
+# Model Manager API (Auto-Download, Manual Guidance & Verification)
 # -------------------------------------------------------------
 MODELS_CATALOG = {
     "kokoro": {
@@ -894,7 +857,8 @@ MODELS_CATALOG = {
         "repo_id": "hexgrad/Kokoro-82M",
         "manual_url": "https://huggingface.co/hexgrad/Kokoro-82M/tree/main",
         "folder": "Kokoro-82M",
-        "default_size": "~350 MB"
+        "default_size": "~350 MB",
+        "approx_mb": 350
     },
     "chatterbox_nano": {
         "name": "Chatterbox-Turbo",
@@ -903,7 +867,8 @@ MODELS_CATALOG = {
         "repo_id": "ResembleAI/chatterbox-turbo",
         "manual_url": "https://huggingface.co/ResembleAI/chatterbox-turbo/tree/main",
         "folder": "chatterbox-turbo",
-        "default_size": "~1.2 GB"
+        "default_size": "~1.2 GB",
+        "approx_mb": 1200
     },
     "cosyvoice2": {
         "name": "CosyVoice 2 (0.5B)",
@@ -912,7 +877,8 @@ MODELS_CATALOG = {
         "repo_id": "FunAudioLLM/CosyVoice2-0.5B",
         "manual_url": "https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B/tree/main",
         "folder": "CosyVoice2-0.5B",
-        "default_size": "~3.8 GB"
+        "default_size": "~3.8 GB",
+        "approx_mb": 3800
     },
     "qwen3_tts": {
         "name": "Qwen3-TTS",
@@ -921,17 +887,14 @@ MODELS_CATALOG = {
         "repo_id": "Qwen/Qwen2.5-0.5B",
         "manual_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B/tree/main",
         "folder": "Qwen2.5-0.5B",
-        "default_size": "~2.1 GB"
+        "default_size": "~2.1 GB",
+        "approx_mb": 2100
     }
 }
 
-model_download_status = {}
-
 def get_dir_size_mb(path: Path) -> float:
-    if not path or not path.exists():
-        return 0.0
-    if path.is_file():
-        return round(path.stat().st_size / (1024 * 1024), 1)
+    if not path or not path.exists(): return 0.0
+    if path.is_file(): return round(path.stat().st_size / (1024 * 1024), 1)
     total = sum(f.stat().st_size for f in path.glob("**/*") if f.is_file())
     return round(total / (1024 * 1024), 1)
 
@@ -939,8 +902,7 @@ def find_model_path(model_id: str) -> Optional[Path]:
     info = MODELS_CATALOG.get(model_id, {})
     folder_name = info.get("folder", model_id).lower()
     mid_low = model_id.lower()
-    
-    # 1. Check local pretrained_models folder (Exact + Fuzzy Match)
+
     pretrained_dir = BASE_DIR / "pretrained_models"
     if pretrained_dir.exists():
         for p in pretrained_dir.iterdir():
@@ -957,20 +919,15 @@ def find_model_path(model_id: str) -> Optional[Path]:
                 if "kokoro" in mid_low and "kokoro" in p_low:
                     if any(p.iterdir()): return p
 
-    # 2. Check HuggingFace Hub Cache (Exact + Fuzzy Match)
     hf_hub = Path.home() / ".cache" / "huggingface" / "hub"
     if hf_hub.exists():
         for p in hf_hub.iterdir():
             if p.is_dir():
                 p_low = p.name.lower()
-                if "cosy" in mid_low and "cosy" in p_low:
-                    return p
-                if "qwen" in mid_low and "qwen" in p_low:
-                    return p
-                if "chatterbox" in mid_low and "chatterbox" in p_low:
-                    return p
-                if "kokoro" in mid_low and "kokoro" in p_low:
-                    return p
+                if "cosy" in mid_low and "cosy" in p_low: return p
+                if "qwen" in mid_low and "qwen" in p_low: return p
+                if "chatterbox" in mid_low and "chatterbox" in p_low: return p
+                if "kokoro" in mid_low and "kokoro" in p_low: return p
 
     return None
 
@@ -1000,8 +957,7 @@ async def get_models_status():
 @app.get("/api/models/{model_id}/instructions")
 async def get_model_instructions(model_id: str):
     info = MODELS_CATALOG.get(model_id)
-    if not info:
-        raise HTTPException(status_code=404, detail="Model not found.")
+    if not info: raise HTTPException(status_code=404, detail="Model not found.")
     target_dir = BASE_DIR / "pretrained_models" / info.get("folder", model_id)
     return {
         "id": model_id,
@@ -1015,36 +971,24 @@ async def get_model_instructions(model_id: str):
 @app.post("/api/models/{model_id}/verify")
 async def verify_model_installation(model_id: str):
     info = MODELS_CATALOG.get(model_id)
-    if not info:
-        raise HTTPException(status_code=404, detail="Model not found.")
+    if not info: raise HTTPException(status_code=404, detail="Model not found.")
     m_path = find_model_path(model_id)
     is_installed = m_path is not None and m_path.exists()
     size_mb = get_dir_size_mb(m_path) if is_installed else 0.0
-    
     if is_installed and hasattr(engine_mgr, "engines") and "chatterbox_nano" in engine_mgr.engines:
         engine_mgr.engines["chatterbox_nano"].init_model()
-            
-    return {
-        "status": "success",
-        "installed": is_installed,
-        "size_mb": size_mb,
-        "path": str(m_path.resolve()) if m_path else None
-    }
+    return {"status": "success", "installed": is_installed, "size_mb": size_mb}
 
 @app.delete("/api/models/{model_id}")
 async def delete_model_endpoint(model_id: str):
     if model_id == engine_mgr.active_engine_name:
         raise HTTPException(status_code=400, detail="Cannot delete currently active engine. Switch engine first.")
-    
     m_path = find_model_path(model_id)
     if not m_path or not m_path.exists():
         return {"status": "not_found", "message": "Model cache not found or already deleted."}
-
     try:
-        if m_path.is_dir():
-            shutil.rmtree(m_path)
-        else:
-            m_path.unlink()
+        if m_path.is_dir(): shutil.rmtree(m_path)
+        else: m_path.unlink()
         model_download_status[model_id] = "idle"
         return {"status": "deleted", "model_id": model_id}
     except Exception as e:
@@ -1053,11 +997,11 @@ async def delete_model_endpoint(model_id: str):
 @app.post("/api/models/{model_id}/download")
 async def download_model_endpoint(model_id: str):
     info = MODELS_CATALOG.get(model_id)
-    if not info:
-        raise HTTPException(status_code=404, detail="Unknown model.")
+    if not info: raise HTTPException(status_code=404, detail="Unknown model.")
+    if model_id != "kokoro" and not is_pro_licensed():
+        raise HTTPException(status_code=403, detail="VoiceForge PRO license required to download custom cloning engines.")
 
     model_name = info.get("name", model_id)
-
     if model_download_status.get(model_id) == "downloading":
         return {"status": "already_downloading", "model_id": model_id}
 
@@ -1094,34 +1038,15 @@ async def download_model_endpoint(model_id: str):
                 KPipeline(lang_code="a", device="cpu")
             elif model_id == "chatterbox_nano":
                 from huggingface_hub import snapshot_download
-                snapshot_download(
-                    repo_id="ResembleAI/chatterbox-turbo",
-                    local_dir=str(target_dir),
-                    local_dir_use_symlinks=False,
-                    token=None
-                )
+                snapshot_download(repo_id="ResembleAI/chatterbox-turbo", local_dir=str(target_dir), local_dir_use_symlinks=False, token=None)
                 if hasattr(engine_mgr, "engines") and "chatterbox_nano" in engine_mgr.engines:
                     engine_mgr.engines["chatterbox_nano"].init_model()
             elif model_id == "cosyvoice2":
                 from huggingface_hub import snapshot_download
-                snapshot_download(
-                    repo_id="FunAudioLLM/CosyVoice2-0.5B",
-                    local_dir=str(target_dir),
-                    local_dir_use_symlinks=False,
-                    token=None
-                )
-                if hasattr(engine_mgr, "engines") and "cosyvoice2" in engine_mgr.engines:
-                    engine_mgr.engines["cosyvoice2"].init_model()
+                snapshot_download(repo_id="FunAudioLLM/CosyVoice2-0.5B", local_dir=str(target_dir), local_dir_use_symlinks=False, token=None)
             elif model_id == "qwen3_tts":
                 from huggingface_hub import snapshot_download
-                snapshot_download(
-                    repo_id="Qwen/Qwen2.5-0.5B",
-                    local_dir=str(target_dir),
-                    local_dir_use_symlinks=False,
-                    token=None
-                )
-                if hasattr(engine_mgr, "engines") and "qwen3_tts" in engine_mgr.engines:
-                    engine_mgr.engines["qwen3_tts"].init_model()
+                snapshot_download(repo_id="Qwen/Qwen2.5-0.5B", local_dir=str(target_dir), local_dir_use_symlinks=False, token=None)
 
             model_download_status[model_id] = "installed"
             final_mb = get_dir_size_mb(target_dir)
@@ -1176,7 +1101,8 @@ async def ws_live(websocket: WebSocket):
             "type": "init",
             "reading": is_stream_reading_active,
             "engine": engine_mgr.active_engine_name,
-            "voices": list(engine_mgr.get_active().voice_audio_cache.keys())
+            "voices": list(engine_mgr.get_active().voice_audio_cache.keys()),
+            "pro": is_pro_licensed()
         })
         while True: await websocket.receive_text()
     except WebSocketDisconnect:
@@ -1203,6 +1129,7 @@ async def ws_reader(websocket: WebSocket):
             await broadcast_reader({"type": "config", "reader": config["reader"]})
     except WebSocketDisconnect:
         if websocket in reader_websockets: reader_websockets.remove(websocket)
+        asyncio.create_task(delayed_shutdown_check())
 
 @app.websocket("/ws/chat/{source_id}")
 async def ws_source_chat(websocket: WebSocket, source_id: str):
