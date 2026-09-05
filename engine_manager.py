@@ -81,9 +81,9 @@ VOICES_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 def find_voice_file(voice_name: str) -> Optional[Path]:
-    """Case-insensitive voice finder for Linux and Windows."""
+    """Case-insensitive voice finder supporting .vfs, .wav, .mp3."""
     v_clean = voice_name.lower().replace("!", "").strip()
-    supported_exts = [".wav", ".mp3", ".ogg", ".flac"]
+    supported_exts = [".vfs", ".wav", ".mp3", ".ogg", ".flac"]
     
     # 1. Search primary voices directory
     if VOICES_DIR.exists():
@@ -102,19 +102,21 @@ def find_voice_file(voice_name: str) -> Optional[Path]:
 
 def adjust_speed(wav_np: np.ndarray, sr: int, speed: float) -> np.ndarray:
     if abs(speed - 1.0) < 0.02 or speed <= 0:
-        return wav_np
+        return wav_np.astype(np.float32)
     try:
-        waveform = torch.from_numpy(wav_np).unsqueeze(0).float()
-        effects = [["speed", f"{speed:.2f}"], ["rate", f"{sr}"]]
-        res_wav, _ = torchaudio.sox_effects.apply_effects_tensor(waveform, sr, effects)
-        return res_wav.squeeze(0).numpy().astype(np.float32)
+        import librosa
+        stretched = librosa.effects.time_stretch(wav_np.astype(np.float32), rate=float(speed))
+        return stretched.astype(np.float32)
     except Exception:
         try:
+            waveform = torch.from_numpy(wav_np).unsqueeze(0).float()
+            effects = [["speed", f"{speed:.2f}"], ["rate", f"{sr}"]]
+            res_wav, _ = torchaudio.sox_effects.apply_effects_tensor(waveform, sr, effects)
+            return res_wav.squeeze(0).numpy().astype(np.float32)
+        except Exception:
             new_len = int(len(wav_np) / speed)
             indices = np.linspace(0, len(wav_np) - 1, new_len)
             return np.interp(indices, np.arange(len(wav_np)), wav_np).astype(np.float32)
-        except Exception:
-            return wav_np
 
 def parse_segments(text: str) -> List[Tuple[str, str, Optional[float]]]:
     text = text.strip()
@@ -122,9 +124,17 @@ def parse_segments(text: str) -> List[Tuple[str, str, Optional[float]]]:
         return [("default", "", None)]
 
     import re
-    tag_pattern = r"(?:^|\s)!([a-zA-Z0-9_\-]+)(?:[-_](\d*\.?\d+))?\s+"
+    # Match !name or !name-0.75 or !name-.75 or !name-1.20
+    tag_pattern = r"(?:^|\s)!([a-zA-Z0-9_]+)(?:[-_](\d*\.?\d+))?\s+"
     matches = list(re.finditer(tag_pattern, text))
     if not matches:
+        lead_match = re.match(r"^!([a-zA-Z0-9_]+)(?:[-_](\d*\.?\d+))?\s*(.*)$", text)
+        if lead_match:
+            v = lead_match.group(1).lower()
+            s_raw = lead_match.group(2)
+            s = float(s_raw) if s_raw else None
+            b = lead_match.group(3).strip()
+            return [(v, b, s)]
         return [("default", text, None)]
 
     segments = []
@@ -289,7 +299,7 @@ class EngineManager:
                 if hasattr(eng, "voice_paths"): eng.voice_paths.clear()
                 if hasattr(eng, "voice_audio_cache"): eng.voice_audio_cache.clear()
 
-        supported_exts = [".wav", ".mp3", ".ogg", ".flac"]
+        supported_exts = [".vfs", ".wav", ".mp3", ".ogg", ".flac"]
         found = [f for f in VOICES_DIR.iterdir() if f.suffix.lower() in supported_exts] if VOICES_DIR.exists() else []
         for f in found:
             name = f.stem.lower()
