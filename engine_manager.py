@@ -1,3 +1,13 @@
+
+def check_pro_unlocked() -> bool:
+    if CONFIG_FILE.exists():
+        try:
+            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            return bool(cfg.get("license", {}).get("pro", False))
+        except Exception:
+            pass
+    return False
+
 import io
 import os
 import sys
@@ -102,23 +112,48 @@ def find_chatterbox_weights() -> Optional[Path]:
 
     return None
 
+
+def resolve_audio_path_for_loader(file_path: Path) -> Path:
+    """
+    Transparent .vfs audio bridge:
+    Allows .vfs disguised files in voices/ to be decoded seamlessly by librosa and libsndfile,
+    while also supporting standard .mp3, .wav, .flac, .ogg files added by users.
+    """
+    if not file_path or not file_path.exists():
+        return file_path
+
+    if file_path.suffix.lower() == ".vfs":
+        cache_dir = OUTPUT_DIR / ".vfs_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(file_path, "rb") as f:
+            header = f.read(4)
+
+        is_mp3 = header.startswith(b"ID3") or (len(header) >= 2 and header[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"))
+        target_ext = ".mp3" if is_mp3 else ".wav"
+
+        cached_file = cache_dir / f"{file_path.stem}{target_ext}"
+        if not cached_file.exists() or cached_file.stat().st_mtime < file_path.stat().st_mtime:
+            shutil.copy2(file_path, cached_file)
+        return cached_file
+
+    return file_path
+
 def find_voice_file(voice_name: str) -> Optional[Path]:
-    """Case-insensitive voice finder supporting .vfs, .wav, .mp3."""
+    """Finds custom voices supporting both .vfs disguised tracks and user .mp3/.wav files."""
     v_clean = voice_name.lower().replace("!", "").strip()
-    supported_exts = [".vfs", ".wav", ".mp3", ".ogg", ".flac"]
-    
-    # 1. Search primary voices directory
+    supported_exts = [".vfs", ".mp3", ".wav", ".ogg", ".flac"]
+
     if VOICES_DIR.exists():
         for f in VOICES_DIR.iterdir():
             if f.is_file() and f.stem.lower() == v_clean and f.suffix.lower() in supported_exts:
-                return f
+                return resolve_audio_path_for_loader(f)
 
-    # 2. Check legacy Chatterbox64 voices directory as fallback
     alt_dir = Path.home() / "Documents" / "Chatterbox64" / "voices"
     if alt_dir.exists():
         for f in alt_dir.iterdir():
             if f.is_file() and f.stem.lower() == v_clean and f.suffix.lower() in supported_exts:
-                return f
+                return resolve_audio_path_for_loader(f)
 
     return None
 
@@ -146,7 +181,6 @@ def parse_segments(text: str) -> List[Tuple[str, str, Optional[float]]]:
         return [("default", "", None)]
 
     import re
-    # Match !name or !name-0.75 or !name-.75 or !name-1.20
     tag_pattern = r"(?:^|\s)!([a-zA-Z0-9_]+)(?:[-_](\d*\.?\d+))?\s+"
     matches = list(re.finditer(tag_pattern, text))
     if not matches:

@@ -7,7 +7,10 @@
     "click here",
     "discord.gg/scam"
   ],
-  "allow_list": [],
+  "allow_list": [
+    "bearloves",
+    "bearlovers"
+  ],
   "min_length": 1,
   "max_length": 500,
   "block_bots": false,
