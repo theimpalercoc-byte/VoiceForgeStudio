@@ -608,9 +608,32 @@ async def get_voices():
 
 @app.get("/api/voices/{name}/preview")
 async def preview_voice(name: str, phrase: Optional[str] = None):
-    raw_phrase = phrase if phrase and phrase.strip() else engine_mgr.test_phrase
-    text = raw_phrase.replace("[voice]", name)
+    from kokoro_engine import KOKORO_VOICES
+    v_clean = name.replace("!", "").lower().strip()
+
+    # Determine which engine will actually speak
+    if v_clean in KOKORO_VOICES:
+        active_model_label = "Kokoro 82M"
+    else:
+        eng_name = engine_mgr.active_engine_name
+        if eng_name == "chatterbox_nano":
+            active_model_label = "Chatterbox Turbo"
+        elif eng_name == "cosyvoice2":
+            active_model_label = "CosyVoice 2"
+        elif eng_name == "qwen3_tts":
+            active_model_label = "Qwen3 TTS"
+        else:
+            active_model_label = "Kokoro 82M"
+
+    if phrase and phrase.strip() and "[voice]" not in phrase:
+        text = phrase.strip()
+    else:
+        # Verbal model announcement so you always hear which AI engine generated the voice
+        text = f"Hello! This is {name.capitalize()}, running live on {active_model_label}."
+
+    logger.info(f"[Voice Preview] Synthesizing '!{name}' using active engine [{active_model_label}]...")
     wav_np, sr = await asyncio.to_thread(engine_mgr.generate_multi, f"!{name} {text}", 1.0)
+
     buf = io.BytesIO()
     sf.write(buf, wav_np, sr, format="WAV")
     buf.seek(0)
@@ -937,38 +960,99 @@ async def download_model_endpoint(model_id: str):
     if not info:
         raise HTTPException(status_code=404, detail="Unknown model.")
 
+    model_name = info.get("name", model_id)
+
     if model_download_status.get(model_id) == "downloading":
         return {"status": "already_downloading", "model_id": model_id}
 
+    async def monitor_disk_progress(target_dir: Path, expected_mb: float, m_name: str):
+        while model_download_status.get(model_id) == "downloading":
+            try:
+                cur_mb = get_dir_size_mb(target_dir)
+                pct = max(1, min(99, int((cur_mb / max(1.0, expected_mb)) * 100)))
+                log_text = f"[Downloading] {m_name}: {pct}% ({cur_mb:.1f} MB / ~{expected_mb} MB)"
+                logger.info(log_text)
+                await broadcast_ws({
+                    "type": "model_download_progress",
+                    "model_id": model_id,
+                    "percent": pct,
+                    "cur_mb": cur_mb,
+                    "total_mb": expected_mb,
+                    "text": log_text
+                })
+            except Exception:
+                pass
+            await asyncio.sleep(1.5)
+
     async def do_download():
         model_download_status[model_id] = "downloading"
+        target_dir = BASE_DIR / "pretrained_models" / info.get("folder", model_id)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        expected_mb = float(info.get("approx_mb", 1500))
+
+        progress_task = asyncio.create_task(monitor_disk_progress(target_dir, expected_mb, model_name))
         try:
-            logger.info(f"[Model Manager] Starting download for {info[name]}...")
-            target_dir = BASE_DIR / "pretrained_models" / info.get("folder", model_id)
-            target_dir.mkdir(parents=True, exist_ok=True)
-            
+            logger.info(f"[Model Manager] Starting download for {model_name}...")
             if model_id == "kokoro":
                 from kokoro import KPipeline
                 KPipeline(lang_code="a", device="cpu")
             elif model_id == "chatterbox_nano":
                 from huggingface_hub import snapshot_download
-                snapshot_download(repo_id="ResembleAI/chatterbox-turbo", local_dir=str(target_dir), token=False)
-                engine_mgr.engines["chatterbox_nano"].init_model()
+                snapshot_download(
+                    repo_id="ResembleAI/chatterbox-turbo",
+                    local_dir=str(target_dir),
+                    local_dir_use_symlinks=False,
+                    token=None
+                )
+                if hasattr(engine_mgr, "engines") and "chatterbox_nano" in engine_mgr.engines:
+                    engine_mgr.engines["chatterbox_nano"].init_model()
             elif model_id == "cosyvoice2":
                 from huggingface_hub import snapshot_download
-                snapshot_download(repo_id="FunAudioLLM/CosyVoice2-0.5B", local_dir=str(target_dir), token=False)
+                snapshot_download(
+                    repo_id="FunAudioLLM/CosyVoice2-0.5B",
+                    local_dir=str(target_dir),
+                    local_dir_use_symlinks=False,
+                    token=None
+                )
+                if hasattr(engine_mgr, "engines") and "cosyvoice2" in engine_mgr.engines:
+                    engine_mgr.engines["cosyvoice2"].init_model()
             elif model_id == "qwen3_tts":
                 from huggingface_hub import snapshot_download
-                snapshot_download(repo_id="Qwen/Qwen2.5-0.5B", local_dir=str(target_dir), token=False)
-                
+                snapshot_download(
+                    repo_id="Qwen/Qwen2.5-0.5B",
+                    local_dir=str(target_dir),
+                    local_dir_use_symlinks=False,
+                    token=None
+                )
+                if hasattr(engine_mgr, "engines") and "qwen3_tts" in engine_mgr.engines:
+                    engine_mgr.engines["qwen3_tts"].init_model()
+
             model_download_status[model_id] = "installed"
-            logger.info(f"[Model Manager] ✓ Successfully installed {info[name]}.")
+            final_mb = get_dir_size_mb(target_dir)
+            success_msg = f"✓ Successfully installed {model_name} ({final_mb:.1f} MB)! Ready to activate."
+            logger.info(f"[Model Manager] {success_msg}")
+            await broadcast_ws({
+                "type": "model_download_complete",
+                "model_id": model_id,
+                "size_mb": final_mb,
+                "text": success_msg
+            })
+            await broadcast_ws({"type": "model_status_updated", "model_id": model_id})
         except Exception as err:
             model_download_status[model_id] = "error"
-            logger.error(f"[Model Manager] Download error: {err}")
+            err_msg = f"❌ Error downloading {model_name}: {err}"
+            logger.error(f"[Model Manager] {err_msg}")
+            await broadcast_ws({
+                "type": "model_download_error",
+                "model_id": model_id,
+                "error": str(err),
+                "text": err_msg
+            })
+        finally:
+            progress_task.cancel()
 
     asyncio.create_task(do_download())
-    return {"status": "downloading", "model_id": model_id, "message": f"Downloading {info[name]} in the background."}
+    return {"status": "downloading", "model_id": model_id, "message": f"Downloading {model_name} in background."}
 
 @app.post("/api/generate")
 async def manual_generate(payload: dict):
