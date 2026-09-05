@@ -1,38 +1,48 @@
 @echo off
-title VoiceForge Master Studio (Live Server Console)
+title VoiceForge Master Studio (Console)
 cd /d "%~dp0"
 
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8080 ^| findstr LISTENING 2^>nul') do (
-    echo [INFO] Freeing port 8080 from stale process (PID %%a)...
+echo ========================================================
+echo   Starting VoiceForge Studio on http://localhost:8080
+echo ========================================================
+echo.
+
+:: 1. Clear any stale process on port 8080
+for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8080" ^| findstr "LISTENING"') do (
+    echo [INFO] Freeing port 8080 from existing process (PID %%a)...
     taskkill /f /pid %%a >nul 2>&1
 )
 
+:: 2. Check runtime exists
 if not exist runtime\python.exe (
+    echo [SETUP] Portable runtime not found. Running setup.bat...
     call setup.bat
     if not exist runtime\python.exe (
-        echo [ERROR] Setup did not complete.
+        echo [ERROR] Setup failed to create runtime\python.exe.
         pause
         exit /b 1
     )
 )
 
+:: 3. Configure environment
 set "PATH=%~dp0runtime;%~dp0runtime\Scripts;%PATH%"
 set "PYTHONPATH=%~dp0;%PYTHONPATH%"
 set "PLAYWRIGHT_BROWSERS_PATH=%~dp0runtime\playwright-browsers"
 
-echo ========================================================
-echo   Starting VoiceForge Server on http://localhost:8080
-echo   Keep this window open to view live engine logs!
-echo ========================================================
-echo.
+:: 4. Launch browser interface
+start "" http://localhost:8080
 
-if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
-    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --app=http://localhost:8080 --window-size=1400,900
-) else if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
-    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --app=http://localhost:8080 --window-size=1400,900
-) else (
-    start "" http://localhost:8080
-)
-
+:: 5. Launch Python backend
+echo Starting backend server...
 runtime\python.exe app.py
+
+:: 6. If Python ever exits or crashes, keep window open so you can see the error
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo ========================================================
+    echo  [CRASH DETECTED] Server exited with error code %ERRORLEVEL%.
+    echo ========================================================
+)
+echo.
+echo VoiceForge server has stopped.
 pause

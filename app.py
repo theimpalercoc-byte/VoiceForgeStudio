@@ -359,11 +359,7 @@ async def execute_clean_exit():
     logger.info("[Shutdown] Complete. Releasing port 8080 and exiting.")
     os._exit(0)
 
-@app.post("/api/shutdown")
-async def manual_shutdown():
-    logger.info("[Shutdown] Received manual exit signal from UI.")
-    asyncio.create_task(execute_clean_exit())
-    return {"status": "shutting_down"}
+
 
 app = FastAPI(title="VoiceForge Studio Pro", version="1.3.4", lifespan=lifespan)
 app.add_middleware(NoCacheMiddleware)
@@ -375,6 +371,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
+
+@app.post("/api/shutdown")
+async def manual_shutdown_endpoint():
+    logger.info("[Shutdown] Received manual exit signal from UI.")
+    asyncio.create_task(execute_clean_exit())
+    return {"status": "shutting_down"}
+
 
 
 from fastapi.responses import FileResponse
