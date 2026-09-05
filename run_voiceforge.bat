@@ -1,5 +1,5 @@
 @echo off
-title VoiceForge Master Studio
+title VoiceForge Master Studio (Live Server Console)
 cd /d "%~dp0"
 
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8080 ^| findstr LISTENING 2^>nul') do (
@@ -20,7 +20,12 @@ set "PATH=%~dp0runtime;%~dp0runtime\Scripts;%PATH%"
 set "PYTHONPATH=%~dp0;%PYTHONPATH%"
 set "PLAYWRIGHT_BROWSERS_PATH=%~dp0runtime\playwright-browsers"
 
-:: Launch in Dedicated Desktop App Window
+echo ========================================================
+echo   Starting VoiceForge Server on http://localhost:8080
+echo   Keep this window open to view live engine logs!
+echo ========================================================
+echo.
+
 if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
     start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --app=http://localhost:8080 --window-size=1400,900
 ) else if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
@@ -30,3 +35,4 @@ if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
 )
 
 runtime\python.exe app.py
+pause

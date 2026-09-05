@@ -152,6 +152,17 @@
       </div>
     </header>
 
+    <!-- Live Console & Activity Ticker Bar -->
+    <div style="background:rgba(15,23,42,0.85); backdrop-filter:blur(12px); border:1px solid rgba(56,189,248,0.3); border-radius:12px; padding:8px 14px; display:flex; justify-content:space-between; align-items:center; box-shadow:0 4px 16px rgba(0,0,0,0.4); cursor:pointer;" onclick="openModal('live-terminal-modal')" title="Click to open full live log terminal">
+      <div style="display:flex; align-items:center; gap:10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">
+        <span style="width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 10px #22c55e; flex-shrink:0;"></span>
+        <span style="font-size:0.75rem; color:#38bdf8; font-weight:800; font-family:monospace; flex-shrink:0;">[LIVE LOG]:</span>
+        <span id="live-ticker-text" style="font-size:0.82rem; font-family:monospace; color:#f8fafc; overflow:hidden; text-overflow:ellipsis;">System online. Waiting for voice commands or chat ingest...</span>
+      </div>
+      <button class="btn btn-secondary" style="padding:2px 10px; font-size:0.72rem; flex-shrink:0;" onclick="event.stopPropagation(); openModal('live-terminal-modal')">📜 Open Terminal Log</button>
+    </div>
+
+
     <div class="tab-bar">
       <button class="tab-btn" id="btn-tab-tts" onclick="switchTab('tab-tts')">🎤 TTS Prompter</button>
       <button class="tab-btn active" id="btn-tab-reader" onclick="switchTab('tab-reader')">📖 Reader</button>
@@ -1760,6 +1771,22 @@
             if (player) player.src = msg.audio_url;
             if (saveLink) { saveLink.href = msg.audio_url; saveLink.download = msg.filename; }
             safeSetText("out-filename", msg.filename);
+          } else if (msg.type === "log_event") {
+            const ticker = safeEl("live-ticker-text");
+            if (ticker) ticker.textContent = msg.text;
+            const logBox = safeEl("terminal-log-output");
+            if (logBox) {
+              const line = document.createElement("div");
+              line.textContent = msg.text;
+              if (msg.level === "ERROR") line.style.color = "#f87171";
+              else if (msg.level === "WARNING") line.style.color = "#facc15";
+              else if (msg.text && msg.text.includes("✓")) line.style.color = "#4ade80";
+              else line.style.color = "#cbd5e1";
+              logBox.appendChild(line);
+              logBox.scrollTop = logBox.scrollHeight;
+            }
+          } else if (msg.type === "model_status_updated") {
+            if (typeof loadModelStatus === "function") loadModelStatus();
           } else if (msg.type === "chat_message") {
             const uFeed = safeEl("unified-feed");
             const cFeed = safeEl("chat-feed");

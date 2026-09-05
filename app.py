@@ -51,6 +51,26 @@ from chat_sources import ChatSourceManager
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s")
 logger = logging.getLogger("VoiceForge")
 
+# -------------------------------------------------------------
+# Real-Time WebSocket Log Streamer for In-App Live Terminal Bar
+# -------------------------------------------------------------
+class LiveWebSocketLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            if active_websockets:
+                payload = {"type": "log_event", "text": msg, "level": record.levelname}
+                for ws in list(active_websockets):
+                    try: asyncio.create_task(ws.send_json(payload))
+                    except Exception: pass
+        except Exception:
+            pass
+
+ws_log_handler = LiveWebSocketLogHandler()
+ws_log_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+logging.getLogger().addHandler(ws_log_handler)
+
+
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "config.json"
 
@@ -795,17 +815,40 @@ def get_dir_size_mb(path: Path) -> float:
 
 def find_model_path(model_id: str) -> Optional[Path]:
     info = MODELS_CATALOG.get(model_id, {})
-    folder_name = info.get("folder", model_id)
+    folder_name = info.get("folder", model_id).lower()
+    mid_low = model_id.lower()
     
-    local_check = BASE_DIR / "pretrained_models" / folder_name
-    if local_check.exists() and any(local_check.iterdir()):
-        return local_check
+    # 1. Check local pretrained_models folder (Exact + Fuzzy Match)
+    pretrained_dir = BASE_DIR / "pretrained_models"
+    if pretrained_dir.exists():
+        for p in pretrained_dir.iterdir():
+            if p.is_dir():
+                p_low = p.name.lower()
+                if p_low == folder_name or p_low == mid_low:
+                    if any(p.iterdir()): return p
+                if "cosy" in mid_low and "cosy" in p_low:
+                    if any(p.iterdir()): return p
+                if "qwen" in mid_low and "qwen" in p_low:
+                    if any(p.iterdir()): return p
+                if "chatterbox" in mid_low and "chatterbox" in p_low:
+                    if any(p.iterdir()): return p
+                if "kokoro" in mid_low and "kokoro" in p_low:
+                    if any(p.iterdir()): return p
 
-    repo = info.get("repo_id", "").replace("/", "--")
-    if repo:
-        hf_dir = Path.home() / ".cache" / "huggingface" / "hub" / f"models--{repo}"
-        if hf_dir.exists():
-            return hf_dir
+    # 2. Check HuggingFace Hub Cache (Exact + Fuzzy Match)
+    hf_hub = Path.home() / ".cache" / "huggingface" / "hub"
+    if hf_hub.exists():
+        for p in hf_hub.iterdir():
+            if p.is_dir():
+                p_low = p.name.lower()
+                if "cosy" in mid_low and "cosy" in p_low:
+                    return p
+                if "qwen" in mid_low and "qwen" in p_low:
+                    return p
+                if "chatterbox" in mid_low and "chatterbox" in p_low:
+                    return p
+                if "kokoro" in mid_low and "kokoro" in p_low:
+                    return p
 
     return None
 
