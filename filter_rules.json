@@ -7,14 +7,7 @@
     "click here",
     "discord.gg/scam"
   ],
-  "allow_list": [
-    "littlesaltybear",
-    "saltylittlebear",
-    "coomer",
-    "ron",
-    "swifty",
-    "FoodistFemboy"
-  ],
+  "allow_list": [],
   "min_length": 1,
   "max_length": 500,
   "block_bots": false,

@@ -1787,6 +1787,8 @@
             }
           } else if (msg.type === "model_status_updated") {
             if (typeof loadModelStatus === "function") loadModelStatus();
+          } else if (msg.type === "filter_event") {
+            if (typeof loadAudioLog === "function") loadAudioLog();
           } else if (msg.type === "chat_message") {
             const uFeed = safeEl("unified-feed");
             const cFeed = safeEl("chat-feed");

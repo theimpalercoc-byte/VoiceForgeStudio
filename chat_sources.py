@@ -29,7 +29,7 @@ class ChatSourceManager:
         self.message_callback = message_callback
         self.status_callback = status_callback
         self.sources: Dict[str, Dict[str, Any]] = {}
-        self.seen_signatures = deque(maxlen=300)
+        self.seen_signatures: Dict[str, float] = {}
         self.playwright = None
         self.context = None
         self.pages: Dict[str, Any] = {}
@@ -312,14 +312,22 @@ class ChatSourceManager:
                             if not user or not text or text == ":":
                                 continue
 
-                            sig = f"{platform_name.lower()}:::{user.lower()}:::{text.lower()}"
-                            if sig in self.seen_signatures:
-                                continue
-                            self.seen_signatures.append(sig)
+                            now_ts = time.time()
+                            # Clean signatures older than 60s
+                            self.seen_signatures = {k: ts for k, ts in self.seen_signatures.items() if (now_ts - ts) < 60.0}
 
+                            sig = f"{platform_name.lower()}:::{user.lower()}:::{text.lower()}"
+                            last_ts = self.seen_signatures.get(sig)
+
+                            if last_ts and (now_ts - last_ts) < 8.0:
+                                # Duplicate within 8 seconds -> Forward to moderation log table
+                                await self.message_callback(platform_name, sdata["target"], user, text, color, sid, is_duplicate=True)
+                                continue
+
+                            self.seen_signatures[sig] = now_ts
                             sdata["message_count"] += 1
                             logger.info(f"[Chat Ingest] [{platform_name.upper()}] {user}: {text}")
-                            await self.message_callback(platform_name, sdata["target"], user, text, color, sid)
+                            await self.message_callback(platform_name, sdata["target"], user, text, color, sid, is_duplicate=False)
                     except (asyncio.TimeoutError, Exception) as err:
                         logger.debug(f"[Scraper Poll Notice] {sid}: {err}")
 
@@ -467,11 +475,21 @@ class ChatSourceManager:
                             let user = "";
                             let text = "";
 
-                            let rUser = row.querySelector('.chat-history--username a, .chat-history--username, a[href*="/user/"], a[href*="/c/"], .chat-author__display-name, span[data-a-target="chat-message-username"], #author-name');
-                            let rMsg = row.querySelector('.chat-history--message, [class*="message-text"], [class*="message"], [class*="chat-text"], .text-fragment, span[data-a-target="chat-line-message-body"], #message');
+                            let rUser = row.querySelector('.chat-history--username a, .chat-history--username, [class*="username"], [class*="author"], a[href*="/user/"], a[href*="/c/"], .chat-author__display-name, span[data-a-target="chat-message-username"], #author-name');
+                            let rMsg = row.querySelector('.chat-history--message, [class*="message-text"], [class*="message-body"], [class*="chat-text"], .text-fragment, span[data-a-target="chat-line-message-body"], #message');
 
                             if (rUser) user = rUser.innerText.trim();
                             if (rMsg) text = rMsg.innerText.trim();
+
+                            // Fallback colon separator if DOM selectors are obscured
+                            if (!user || !text) {
+                                let fullRow = (row.innerText || '').trim();
+                                if (fullRow.includes(':')) {
+                                    let parts = fullRow.split(':', 2);
+                                    if (!user) user = parts[0].replace(/\b(Subscriber|VIP|Moderator|Mod|Admin)\b/gi, '').trim();
+                                    if (!text) text = parts[1].trim();
+                                }
+                            }
 
                             if (!user || !text) {
                                 let lines = row.innerText.trim().split('\\n').map(l => l.trim()).filter(l => l.length > 0);

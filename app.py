@@ -155,7 +155,7 @@ async def auto_open_browser():
     except Exception as e:
         webbrowser.open("http://localhost:8080")
 
-async def handle_unified_chat(platform: str, channel: str, sender: str, message: str, color: str = None, source_id: str = "main"):
+async def handle_unified_chat(platform: str, channel: str, sender: str, message: str, color: str = None, source_id: str = "main", is_duplicate: bool = False):
     ts = time.strftime("%H:%M:%S")
     clean_spoken = audio_filter.clean_for_tts(message) if hasattr(audio_filter, "clean_for_tts") else message
     if not clean_spoken or not clean_spoken.strip():
@@ -193,6 +193,13 @@ async def handle_unified_chat(platform: str, channel: str, sender: str, message:
 
     if not is_stream_reading_active or not clean_spoken:
         return
+
+    if is_duplicate:
+        reason = "Duplicate message (Spam Shield)"
+        audio_filter.log_filtered(chat_item, reason)
+        await broadcast_ws({"type": "filter_event", "data": {"time": ts, "source": platform, "sender": sender, "message": message, "reason": reason}})
+        return
+
 
     # Moderation Check
     blocked, reason = audio_filter.should_block({"sender": sender, "message": message, "raw_message": message, "platform": platform})
@@ -521,6 +528,7 @@ async def get_engine_state():
         "active": engine_mgr.active_engine_name,
         "device": engine_mgr.device,
         "precision": engine_mgr.precision,
+        "compile": bool(getattr(engine_mgr, "compile_model", False)),
         "params": engine_mgr.engine_params,
         "memory_tier": engine_mgr.memory_tier,
         "max_cached_voices": engine_mgr.max_cached_voices,
