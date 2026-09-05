@@ -148,6 +148,7 @@
         <span id="now-speaking-indicator" style="display:none; font-size:0.78rem; color:#4ade80; font-weight:700;">🔊 Speaking...</span>
         <button class="btn btn-secondary" onclick="switchTab('tab-sources')">📡 Sources</button>
         <button class="btn btn-secondary" onclick="switchTab('tab-audio')">⚙️ Settings</button>
+        <button class="btn btn-danger" style="font-weight:700;" onclick="shutdownStudio()">🛑 Exit Studio</button>
       </div>
     </header>
 
@@ -561,6 +562,23 @@
     let currentStudioCategory = "custom";
     let clonedVoicesList = [];
     let kokoroVoicesList = [];
+
+    
+    async function shutdownStudio() {
+      if (!confirm("Are you sure you want to close VoiceForge Studio and shut down all background engines?")) return;
+      try {
+        await fetch("/api/shutdown", { method: "POST" });
+      } catch (e) {}
+
+      document.body.innerHTML = `
+        <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; background:#020617; color:#f8fafc; font-family:sans-serif; text-align:center; padding:20px;">
+          <h1 style="font-size:2.2rem; margin-bottom:12px; background:linear-gradient(135deg,#fff,#f87171); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">VoiceForge Studio Closed</h1>
+          <p style="color:#94a3b8; font-size:1.05rem; max-width:500px; line-height:1.5;">All background audio queues, AI engines, and stream scrapers have shut down. Port 8080 is freed.</p>
+          <button class="btn btn-secondary" style="margin-top:20px;" onclick="window.close()">Close Window</button>
+        </div>
+      `;
+      setTimeout(() => { window.close(); }, 800);
+    }
 
     function safeEl(id) { return document.getElementById(id); }
     function safeSetText(id, text) { const el = safeEl(id); if (el) el.textContent = text; }

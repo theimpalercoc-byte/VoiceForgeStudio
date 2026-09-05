@@ -121,10 +121,19 @@ async def broadcast_reader(event: dict):
 async def auto_open_browser():
     await asyncio.sleep(1.2)
     try:
-        logger.info("[Auto-Launch] Opening VoiceForge Studio in your default browser...")
-        webbrowser.open("http://localhost:8080")
+        import subprocess
+        logger.info("[Auto-Launch] Launching VoiceForge Desktop App Window...")
+        edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+        if os.path.exists(edge_path):
+            subprocess.Popen([edge_path, "--app=http://localhost:8080", "--window-size=1400,900"])
+        elif os.path.exists(chrome_path):
+            subprocess.Popen([chrome_path, "--app=http://localhost:8080", "--window-size=1400,900"])
+        else:
+            webbrowser.open("http://localhost:8080")
     except Exception as e:
-        logger.debug(f"Auto-open browser notice: {e}")
+        webbrowser.open("http://localhost:8080")
 
 async def handle_unified_chat(platform: str, channel: str, sender: str, message: str, color: str = None, source_id: str = "main"):
     ts = time.strftime("%H:%M:%S")
@@ -304,6 +313,37 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
         return response
+
+
+# -------------------------------------------------------------
+# Clean Desktop Application Lifecycle & Auto-Shutdown
+# -------------------------------------------------------------
+shutdown_timer_task = None
+
+async def delayed_shutdown_check():
+    """Shuts down server automatically if all UI windows have been closed."""
+    await asyncio.sleep(8)
+    if len(active_websockets) == 0 and len(reader_websockets) == 0:
+        logger.info("[Auto-Shutdown] All application windows closed. Shutting down VoiceForge...")
+        await execute_clean_exit()
+
+async def execute_clean_exit():
+    try:
+        scheduler.stop()
+        if chat_sources and chat_sources.context:
+            await chat_sources.context.close()
+        if chat_sources and chat_sources.playwright:
+            await chat_sources.playwright.stop()
+    except Exception:
+        pass
+    logger.info("[Shutdown] Complete. Releasing port 8080 and exiting.")
+    os._exit(0)
+
+@app.post("/api/shutdown")
+async def manual_shutdown():
+    logger.info("[Shutdown] Received manual exit signal from UI.")
+    asyncio.create_task(execute_clean_exit())
+    return {"status": "shutting_down"}
 
 app = FastAPI(title="VoiceForge Studio Pro", version="1.3.4", lifespan=lifespan)
 app.add_middleware(NoCacheMiddleware)
@@ -915,6 +955,7 @@ async def ws_live(websocket: WebSocket):
         while True: await websocket.receive_text()
     except WebSocketDisconnect:
         if websocket in active_websockets: active_websockets.remove(websocket)
+        asyncio.create_task(delayed_shutdown_check())
 
 @app.websocket("/ws/reader")
 async def ws_reader(websocket: WebSocket):

@@ -20,6 +20,13 @@ set "PATH=%~dp0runtime;%~dp0runtime\Scripts;%PATH%"
 set "PYTHONPATH=%~dp0;%PYTHONPATH%"
 set "PLAYWRIGHT_BROWSERS_PATH=%~dp0runtime\playwright-browsers"
 
-start "" http://localhost:8080
+:: Launch in Dedicated Desktop App Window
+if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
+    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --app=http://localhost:8080 --window-size=1400,900
+) else if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
+    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --app=http://localhost:8080 --window-size=1400,900
+) else (
+    start "" http://localhost:8080
+)
+
 runtime\python.exe app.py
-pause
