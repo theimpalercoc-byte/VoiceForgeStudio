@@ -1172,7 +1172,7 @@
             <td>${personaBadge}</td>
             <td style="display:flex; gap:6px;">
               <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem;" onclick="selectVoiceForCustomization('${v}'); window.scrollTo({top: 150, behavior: 'smooth'});">⚙️ Customize</button>
-              <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem;" onclick="previewVoice('${v}')">▶ Preview</button>
+              <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem;" onclick="previewVoice('${v}', this)">▶ Preview</button>
               <button class="btn btn-forge" style="padding:4px 10px; font-size:0.75rem;" onclick="benchmarkVoice('${v}')">⚡ Benchmark</button>
             </td>
           </tr>
@@ -1287,13 +1287,41 @@
       }
     }
 
-    function previewVoice(v) {
+    async function previewVoice(v, btnEl) {
+      unlockAudioDirect();
+      const originalText = btnEl ? btnEl.textContent : "▶ Preview";
+      if (btnEl) {
+        btnEl.textContent = "⏳ Loading...";
+        btnEl.disabled = true;
+      }
+
       const phraseInput = safeEl("custom-test-phrase");
       const phrase = phraseInput ? encodeURIComponent(phraseInput.value.trim()) : "";
-      const a = new Audio(`/api/voices/${v}/preview?phrase=${phrase}&t=${Date.now()}`);
-      currentActiveAudio = a;
-      a.volume = getNormalizedVolume();
-      a.play().then(() => setAudioUnlockedUI(true)).catch(err => console.log("Preview notice:", err));
+      const url = `/api/voices/${v}/preview?phrase=${phrase}&t=${Date.now()}`;
+
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          const errText = await res.text();
+          alert("Preview error: " + res.status + " - " + errText);
+          return;
+        }
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = new Audio(blobUrl);
+        currentActiveAudio = a;
+        a.volume = getNormalizedVolume();
+        await a.play();
+        setAudioUnlockedUI(true);
+      } catch (err) {
+        console.error("Preview playback error:", err);
+        alert("Audio playback notice: Click 'Click to Enable Audio' at the top of the screen.");
+      } finally {
+        if (btnEl) {
+          btnEl.textContent = originalText;
+          btnEl.disabled = false;
+        }
+      }
     }
 
     async function benchmarkVoice(v) {
