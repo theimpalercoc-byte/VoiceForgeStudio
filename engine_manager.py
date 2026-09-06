@@ -237,6 +237,10 @@ class ChatterboxNanoEngine(BaseTTSEngine):
         self.sr = 24000
 
     def init_model(self):
+        if not check_pro_unlocked():
+            logger.info("[Chatterbox-Turbo] Locked. VoiceForge PRO required.")
+            return
+
         if self.model is None:
             try:
                 from chatterbox.tts_turbo import ChatterboxTurboTTS
@@ -246,20 +250,14 @@ class ChatterboxNanoEngine(BaseTTSEngine):
 
                 weights_dir = find_chatterbox_weights()
                 if weights_dir is not None:
-                    logger.info(f"[Chatterbox-Turbo] Found weights at {weights_dir}. Loading via from_local on {dev}...")
+                    logger.info(f"[Chatterbox-Turbo] Found weights at {weights_dir}. Loading on {dev}...")
                     self.model = ChatterboxTurboTTS.from_local(ckpt_dir=str(weights_dir), device=dev)
+                    self.sr = getattr(self.model, "sr", 24000)
+                    logger.info("✓ Chatterbox-Turbo model ready.")
                 else:
-                    logger.info(f"[Chatterbox-Turbo] Local weights not found. Downloading to pretrained_models on {dev}...")
-                    from huggingface_hub import snapshot_download
-                    target = BASE_DIR / "pretrained_models" / "chatterbox-turbo"
-                    target.mkdir(parents=True, exist_ok=True)
-                    snapshot_download(repo_id="ResembleAI/chatterbox-turbo", local_dir=str(target), local_dir_use_symlinks=False, token=None)
-                    self.model = ChatterboxTurboTTS.from_local(ckpt_dir=str(target), device=dev)
-
-                self.sr = getattr(self.model, "sr", 24000)
-                logger.info("✓ Chatterbox-Turbo model ready for zero-shot voice cloning.")
+                    logger.info("[Chatterbox-Turbo] Weights not downloaded yet. Awaiting in-app download.")
             except Exception as e:
-                logger.error(f"Chatterbox-Turbo initialization error: {e}")
+                logger.error(f"Chatterbox-Turbo load error: {e}")
 
     def generate(self, text: str, voice_name: str, params: Optional[Dict[str, Any]] = None) -> np.ndarray:
         params = params or {}
@@ -374,11 +372,11 @@ class EngineManager:
         target_sr = 24000
         combined_audio = []
 
-        chosen_default = "apple"
+        chosen_default = "heart"
         if CONFIG_FILE.exists():
             try:
                 cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-                chosen_default = cfg.get("stream", {}).get("default_voice", "apple").lower().replace("!", "").strip()
+                chosen_default = cfg.get("stream", {}).get("default_voice", "heart").lower().replace("!", "").strip()
             except Exception:
                 pass
 
@@ -400,25 +398,37 @@ class EngineManager:
                 seg_wav = kokoro_engine.generate(seg_text, v_clean, p)
                 seg_sr = kokoro_engine.sr
             else:
-                act_eng = self.get_active()
-                p = self.engine_params.get(self.active_engine_name, {}).copy()
+                # Custom Cloned Voice requested (apple, bane, etc.)
+                if not check_pro_unlocked():
+                    # FREE TIER: Safely route to Kokoro without errors or auto-downloads
+                    logger.info(f"[Free Tier] Custom voice '{v_clean}' requested. Spoken with Kokoro default.")
+                    seg_wav = kokoro_engine.generate(seg_text, "af_heart", {"speed": speed_override if speed_override is not None else 1.0})
+                    seg_sr = kokoro_engine.sr
+                else:
+                    # PRO TIER: Use active custom cloning engine
+                    act_eng = self.get_active()
+                    if getattr(act_eng, "model", None) is None:
+                        logger.warning(f"[PRO Notice] Active model '{act_eng.name}' has not downloaded weights yet. Using Kokoro fallback.")
+                        seg_wav = kokoro_engine.generate(seg_text, "af_heart", {"speed": speed_override if speed_override is not None else 1.0})
+                        seg_sr = kokoro_engine.sr
+                    else:
+                        p = self.engine_params.get(self.active_engine_name, {}).copy()
+                        try:
+                            from app import config as app_cfg
+                            v_prof = app_cfg.get("voice_profiles", {}).get(v_clean, {})
+                            p.update(v_prof)
+                        except Exception:
+                            pass
 
-                try:
-                    from app import config as app_cfg
-                    v_prof = app_cfg.get("voice_profiles", {}).get(v_clean, {})
-                    p.update(v_prof)
-                except Exception:
-                    pass
+                        seg_wav = act_eng.generate(seg_text, v_clean, p)
+                        seg_sr = getattr(act_eng, "sr", 24000)
 
-                seg_wav = act_eng.generate(seg_text, v_clean, p)
-                seg_sr = getattr(act_eng, "sr", 24000)
-
-                if speed_override is not None and abs(speed_override - 1.0) > 0.05:
-                    seg_wav = adjust_speed(seg_wav, seg_sr, speed_override)
+                        if speed_override is not None and abs(speed_override - 1.0) > 0.05:
+                            seg_wav = adjust_speed(seg_wav, seg_sr, speed_override)
 
             if seg_sr != target_sr:
-                seg_tensor = torch.from_numpy(seg_wav).unsqueeze(0)
-                seg_wav = F.resample(seg_tensor, seg_sr, target_sr).squeeze(0).numpy()
+                seg_tensor = torch.from_numpy(seg_wav).unsqueeze(0).float()
+                seg_wav = F.resample(seg_tensor, seg_sr, target_sr).squeeze(0).numpy().astype(np.float32)
 
             combined_audio.append(seg_wav)
 

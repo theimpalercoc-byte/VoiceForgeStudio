@@ -5,7 +5,7 @@
     "read_mode": "all"
   },
   "engine": {
-    "active": "chatterbox_nano",
+    "active": "kokoro",
     "device": "cuda",
     "compile": false
   },
@@ -67,18 +67,7 @@
       "enabled": true
     }
   ],
-  "sources": [
-    {
-      "id": "rumble_1788556705564",
-      "platform": "Rumble",
-      "target": "https://rumble.com/v7f32o2-ayo-its-friday-my-doodsminecraft-then-gta-4-in-4kget-in-hereits-about-to-ge.html?e9s=src_v1_cllr",
-      "chat_url": "https://rumble.com/v7f32o2-ayo-its-friday-my-doodsminecraft-then-gta-4-in-4kget-in-hereits-about-to-ge.html?e9s=src_v1_cllr",
-      "token": "",
-      "status": "connecting",
-      "message_count": 0,
-      "connected_at": 1788556705.564734
-    }
-  ],
+  "sources": [],
   "voice_profiles": {},
   "timed_messages": [
     {
