@@ -909,13 +909,20 @@
       closeModal("sources-modal");
       tEl.value = "";
       try {
-        await fetch("/api/sources/add", {
+        const res = await fetch("/api/sources/add", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ platform, target, token })
         });
+        const d = await res.json();
+        if (!res.ok || d.status !== "success") {
+          alert("Error adding source: " + (d.detail || JSON.stringify(d)));
+        }
         await loadSources();
-      } catch (err) {}
+      } catch (err) {
+        console.error("saveSource error:", err);
+        alert("Network error connecting source: " + err.message);
+      }
     }
 
     async function loadSources() {
@@ -1866,6 +1873,8 @@
             }
           } else if (msg.type === "model_status_updated") {
             if (typeof loadModelStatus === "function") loadModelStatus();
+          } else if (msg.type === "source_status") {
+            if (typeof loadSources === "function") loadSources();
           } else if (msg.type === "filter_event") {
             if (typeof loadAudioLog === "function") loadAudioLog();
           } else if (msg.type === "chat_message") {

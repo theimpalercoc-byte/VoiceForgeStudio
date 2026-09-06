@@ -16,13 +16,27 @@ BASE_DIR = Path(__file__).resolve().parent
 BROWSER_PROFILE_DIR = BASE_DIR / "browser_profile"
 BROWSER_PROFILE_DIR.mkdir(exist_ok=True)
 
-# Auto-detect local Brave or Chrome binaries on Windows / Linux
-BRAVE_PATH = (
-    shutil.which("brave-browser") or 
-    shutil.which("brave") or 
-    "/usr/bin/brave-browser" or
-    "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
-)
+# Ensure Playwright always finds the isolated portable Chromium
+pw_browsers = BASE_DIR / "runtime" / "playwright-browsers"
+if pw_browsers.exists():
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(pw_browsers.resolve())
+
+def get_system_browser() -> Optional[str]:
+    candidates = [
+        r"C:\Program Files\BraveSoftware\Brave-Browser\Applicationrave.exe",
+        r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Applicationrave.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        "/usr/bin/brave-browser",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium-browser"
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return shutil.which("brave-browser") or shutil.which("brave") or shutil.which("google-chrome")
+
+BRAVE_PATH = get_system_browser()
 
 class ChatSourceManager:
     def __init__(self, message_callback: Callable, status_callback: Optional[Callable] = None):
@@ -117,8 +131,19 @@ class ChatSourceManager:
         self.sources[source_id] = source_data
         await self.notify_status(source_id, platform, target_clean, "connecting", f"Connecting ({chat_url})...")
         await self.ensure_scraper_running()
-        if self.context:
+
+        # Wait up to 12 seconds for browser context to be ready
+        for _ in range(24):
+            if self.context:
+                break
+            await asyncio.sleep(0.5)
+
+        if self.context and source_id not in self.pages:
             asyncio.create_task(self.open_source_page(source_id, chat_url, platform))
+        elif not self.context:
+            logger.error(f"[Sources] Scraper context timed out while adding {platform}.")
+            await self.notify_status(source_id, platform, target_clean, "error", "Browser failed to launch.")
+
         return source_data
 
     async def remove_source(self, source_id: str):
@@ -255,6 +280,15 @@ class ChatSourceManager:
 
     async def _main_scraper_loop(self):
         try:
+                        # Purge stale Chromium lockfiles from previous runs
+            for lock_name in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+                lock_f = BROWSER_PROFILE_DIR / lock_name
+                if lock_f.exists():
+                    try:
+                        if lock_f.is_dir(): shutil.rmtree(lock_f)
+                        else: lock_f.unlink()
+                    except Exception: pass
+
             self.playwright = await async_playwright().start()
 
             self.context = await self.playwright.chromium.launch_persistent_context(
