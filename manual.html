@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VoiceForge Master Studio — User Manual</title>
+  <style>
+    @page {
+      margin: 15mm 15mm 15mm 15mm;
+      size: letter;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: #0f172a;
+      line-height: 1.6;
+      font-size: 11pt;
+      margin: 0;
+      padding: 0;
+    }
+    .cover {
+      text-align: center;
+      padding: 60px 20px 40px 20px;
+      border-bottom: 2px solid #e2e8f0;
+      margin-bottom: 30px;
+    }
+    h1 {
+      font-size: 26pt;
+      margin-bottom: 6px;
+      color: #0f172a;
+    }
+    .subtitle {
+      font-size: 13pt;
+      color: #475569;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .tagline {
+      font-size: 10pt;
+      color: #64748b;
+    }
+    h2 {
+      font-size: 16pt;
+      color: #0f172a;
+      border-bottom: 1.5px solid #cbd5e1;
+      padding-bottom: 4px;
+      margin-top: 28px;
+      margin-bottom: 12px;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 12pt;
+      color: #1e293b;
+      margin-top: 16px;
+      margin-bottom: 6px;
+      page-break-after: avoid;
+    }
+    p, ul, ol {
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 9.5pt;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 8px 10px;
+      text-align: left;
+    }
+    th {
+      background-color: #f1f5f9;
+      font-weight: 700;
+      color: #1e293b;
+    }
+    pre, code {
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 9pt;
+      background: #f8fafc;
+      border-radius: 4px;
+    }
+    code {
+      padding: 2px 4px;
+      border: 1px solid #e2e8f0;
+      color: #be123c;
+    }
+    pre {
+      padding: 10px;
+      border: 1px solid #cbd5e1;
+      overflow-x: auto;
+      margin-bottom: 12px;
+      white-space: pre-wrap;
+    }
+    .box {
+      background: #f8fafc;
+      border-left: 4px solid #38bdf8;
+      padding: 10px 14px;
+      margin: 14px 0;
+      font-size: 9.5pt;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="cover">
+    <h1>🎙️ VoiceForge Master Studio</h1>
+    <div class="subtitle">Official User Manual & Operational Runbook — v1.3.4</div>
+    <div class="tagline">Real-Time Hybrid AI Text-to-Speech Livestream Broadcasting Suite</div>
+  </div>
+
+  <h2>1. Overview & Architecture</h2>
+  <p><b>VoiceForge Master Studio</b> bridges live stream chat feeds from multiple broadcasting platforms (Rumble, Kick, X.com, Twitch, YouTube) into synchronized, low-latency neural speech.</p>
+  <div class="box">
+    <b>Architecture Stack:</b>
+    <ul>
+      <li><b>Native C++ Supervisor:</b> High-priority launcher utilizing Windows Job Objects to prevent orphaned background tasks.</li>
+      <li><b>Dual-Engine Audio Dispatcher:</b> Combines Kokoro-82M (multilingual base) with zero-shot cloning engines (Chatterbox-Turbo, CosyVoice 2).</li>
+      <li><b>Multicast Scraper:</b> Headless browser automation with automatic video stream suppression to save system resources.</li>
+      <li><b>OBS Chroma-Key HUD:</b> Transparent overlay rendering live chat badges and animated queues.</li>
+    </ul>
+  </div>
+
+  <h2>2. Free vs. PRO Feature Matrix</h2>
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>Free Version</th><th>PRO Version (Gumroad Unlocked)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Kokoro-82M Base Engine</td><td>✓ Full Access (54 Voices)</td><td>✓ Full Access (54 Voices)</td></tr>
+      <tr><td>Multilingual Catalogs</td><td>✓ 9 Language Packs</td><td>✓ 9 Language Packs</td></tr>
+      <tr><td>Real-Time Speed Modifiers</td><td>✓ !name-.75 / !name-1.20</td><td>✓ !name-.75 / !name-1.20</td></tr>
+      <tr><td>Multicast Chat Ingest</td><td>✓ All Platforms</td><td>✓ All Platforms</td></tr>
+      <tr><td>OBS Chroma-Key Chat HUD</td><td>✓ Included</td><td>✓ Included</td></tr>
+      <tr><td>Speech Moderation & Spam Shield</td><td>✓ Included</td><td>✓ Included</td></tr>
+      <tr><td>Chatterbox-Turbo Zero-Shot Cloning</td><td>🔒 Locked (Kokoro fallback)</td><td><b>✓ Fully Unlocked</b></td></tr>
+      <tr><td>CosyVoice 2 (0.5B) Flow-Matching</td><td>🔒 Locked</td><td><b>✓ Fully Unlocked</b></td></tr>
+      <tr><td>Qwen3-TTS Multi-Emotion</td><td>🔒 Locked</td><td><b>✓ Fully Unlocked</b></td></tr>
+      <tr><td>Custom .vfs Voice Audio Files</td><td>🔒 Free default voice</td><td><b>✓ Full Neural Voice Cloning</b></td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. Windows 11 Zero-Install Setup</h2>
+  <h3>Step 1: Unblock the Downloaded Archive</h3>
+  <p>Right-click <code>VoiceForgeStudio-Windows-x64.zip</code> &rarr; <b>Properties</b> &rarr; Check <b>"Unblock"</b> &rarr; Click <b>Apply</b>. Extract the archive.</p>
+
+  <h3>Step 2: Automated First-Time Setup</h3>
+  <p>Double-click <code>VoiceForgeStudio.exe</code> (or <code>run_voiceforge.bat</code>). On first run, it automatically launches the native setup engine, downloading embedded Python, PyTorch (CUDA 12.1), and audio libraries. Once completed, the studio window opens automatically.</p>
+
+  <h2>4. Model Weights & Footprint Management</h2>
+  <p>In the <b>Settings &rarr; 📦 Model Weights Manager</b>, models operate on a dual-engine architecture:</p>
+  <ul>
+    <li><b>Kokoro-82M:</b> Marked <code>🟢 Always Active</code> for all fast multilingual voices.</li>
+    <li><b>Custom Model Selection:</b> Select between Chatterbox-Turbo, CosyVoice 2, or Qwen3-TTS. Click <code>🔴 Activate This Engine</code> to switch—the previous model deactivates automatically.</li>
+    <li><b>On-Demand Downloads:</b> Click <code>⬇️ Auto-Download</code> to download weights in the background. Progress tracks directly in the top live log bar.</li>
+    <li><b>Offline / Manual Installation:</b> Click <code>📖 Offline / Manual</code> to view the exact folder path and direct link to paste files manually on restricted networks.</li>
+    <li><b>Reclaiming Space:</b> Click <code>🗑️ Remove</code> to force-delete the model from both the project folder and Hugging Face cache.</li>
+  </ul>
+
+  <h2>5. Voice Vault & Proprietary .vfs Audio Tracks</h2>
+  <p>VoiceForge recognizes custom voice reference files inside the <code>voices/</code> folder:</p>
+  <ul>
+    <li><b><code>.vfs</code> (VoiceForge Studio Track):</b> Packaged audio tracks (clean format).</li>
+    <li><b><code>.mp3</code> / <code>.wav</code>:</b> Standard audio files added by users.</li>
+  </ul>
+  <p>Clicking <b>▶ Preview</b> on any voice will synthesize audio where the voice announces its active model (e.g., <i>"Hello! This is Bane, running live on Chatterbox Turbo."</i>).</p>
+
+  <h2>6. Chat Commands & Real-Time Speed Modifiers</h2>
+  <ul>
+    <li><b>Calling Voices:</b> Prefix the voice name with an exclamation mark (e.g., <code>!bane Greetings stream</code>).</li>
+    <li><b>Speed Tags:</b> Append speed modifiers directly to the voice tag:
+      <ul>
+        <li><code>!bane-.75 Slow speech tempo</code> (0.75x speed)</li>
+        <li><code>!bella-1.20 Fast announcement</code> (1.20x speed)</li>
+      </ul>
+    </li>
+    <li><b>Multi-Voice Sentences:</b> Combine multiple voices in a single message:
+      <pre>!bane-.75 I am speaking slow. !bella-1.20 And I am speaking fast!</pre>
+    </li>
+  </ul>
+
+  <h2>7. Moderation, Anti-Spam & Whitelisting</h2>
+  <div class="box">
+    <ul>
+      <li><b>Spoken-Text-Only Censorship:</b> Blocked keywords only apply to spoken message content. Usernames are never blocked or censored.</li>
+      <li><b>Spam Shield (8-Second Duplicate Window):</b> If a viewer sends the exact same message twice within 8 seconds, it is sent to the <b>Filtered Messages Log</b> table with a <code>🔊 Restore</code> button.</li>
+      <li><b>Whitelisted Users:</b> Add usernames to the Whitelist in the Audio Log tab to bypass all filters.</li>
+    </ul>
+  </div>
+
+  <h2>8. Troubleshooting Quick-Guide</h2>
+  <ul>
+    <li><b>Port 8080 Conflict (Errno 10048):</b> Run <code>taskkill /F /IM python.exe /IM VoiceForgeStudio.exe</code> in Command Prompt to clear stale background processes. <code>run_voiceforge.bat</code> performs this automatically on launch.</li>
+    <li><b>Smart App Control (SAC) Block:</b> Run <code>Get-ChildItem -Recurse | Unblock-File</code> in PowerShell, or launch using <code>run_voiceforge.bat</code>.</li>
+    <li><b>No Sound:</b> Check if the top button reads <code>⚠️ Click to Enable Audio</code>. Click it once to activate browser autoplay.</li>
+  </ul>
+
+</body>
+</html>
