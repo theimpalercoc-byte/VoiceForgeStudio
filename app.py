@@ -56,8 +56,8 @@ CONFIG_FILE = BASE_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "stream_reading": True,
-    "stream": {"default_voice": "swifty", "read_mode": "all"},
-    "engine": {"active": "chatterbox_nano", "device": "cuda" if torch.cuda.is_available() else "cpu", "compile": False},
+    "stream": {"default_voice": "heart", "read_mode": "all", "auto_chatter_voices": True},
+    "engine": {"active": "kokoro", "device": "cuda" if torch.cuda.is_available() else "cpu", "compile": False},
     "memory": {"tier": "vram" if torch.cuda.is_available() else "ram", "max_cached_voices": 50},
     "test_phrase": "Hello! This is [voice] testing in-memory speed on VoiceForge.",
     "engine_params": {
@@ -77,7 +77,10 @@ DEFAULT_CONFIG = {
     ],
     "sources": [],
     "voice_profiles": {},
-    "license": {"pro": False}
+    "chatter_voices": {},
+    "license": {"pro": False},
+    "gumroad_product_id": "Y5ekd7PYG87jMvspw9YEDg==",
+    "gumroad_permalink": "voiceforge_pro"
 }
 
 def load_config() -> dict:
@@ -103,12 +106,12 @@ source_popout_ws: Dict[str, List[WebSocket]] = {}
 chat_history: List[Dict[str, Any]] = []
 model_download_status: Dict[str, str] = {}
 
-# 3. Real-Time WebSocket Log Broadcaster for In-App Live Terminal Bar
+# 3. Real-Time WebSocket Log Broadcaster
 class LiveWebSocketLogHandler(logging.Handler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            if active_websockets:
+            if "active_websockets" in globals() and active_websockets:
                 payload = {"type": "log_event", "text": msg, "level": record.levelname}
                 for ws in list(active_websockets):
                     try: asyncio.create_task(ws.send_json(payload))
@@ -120,7 +123,7 @@ ws_log_handler = LiveWebSocketLogHandler()
 ws_log_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
 logging.getLogger().addHandler(ws_log_handler)
 
-# 4. Gumroad PRO License State Checker
+# 4. Verified Gumroad Configuration
 GUMROAD_PRODUCT_ID = "Y5ekd7PYG87jMvspw9YEDg=="
 GUMROAD_PRODUCT_PERMALINK = "voiceforge_pro"
 GUMROAD_STORE_URL = "https://slayermind3.gumroad.com/l/voiceforge_pro"
@@ -152,12 +155,6 @@ async def auto_open_browser():
             webbrowser.open("http://localhost:8080")
     except Exception:
         webbrowser.open("http://localhost:8080")
-
-async def delayed_shutdown_check():
-    await asyncio.sleep(8)
-    if len(active_websockets) == 0 and len(reader_websockets) == 0:
-        logger.info("[Auto-Shutdown] All UI windows closed. Shutting down VoiceForge...")
-        await execute_clean_exit()
 
 async def execute_clean_exit():
     try:
@@ -228,19 +225,56 @@ async def handle_unified_chat(platform: str, channel: str, sender: str, message:
     first_word = message.strip().split()[0].lower() if message.strip() else ""
     matched_cmd = next((c for c in config.get("commands", []) if c["name"].lower() == first_word and c.get("enabled", True)), None)
     if matched_cmd:
-        cmd_voice = matched_cmd.get('voice', 'swifty').lstrip('!')
+        cmd_voice = matched_cmd.get('voice', 'heart').lstrip('!')
         await tts_queue.put({"text": f"!{cmd_voice} {matched_cmd['response']}", "sender": sender, "platform": platform, "volume": vol})
         return
 
-    # 2. Voice Tag Resolution & Speed Modifiers
-    from kokoro_engine import KOKORO_VOICES
+    # 2. Voice Tag Resolution & Persistent Chatter Memory
+    from kokoro_engine import KOKORO_VOICES, kokoro_engine
     primary_voices = list(engine_mgr.get_active().voice_audio_cache.keys())
     all_available = set([v.lower() for v in primary_voices] + list(KOKORO_VOICES.keys()))
 
-    raw_default = config.get("stream", {}).get("default_voice", "swifty").lstrip('!')
-    active_default = raw_default if raw_default.lower() in all_available else "swifty"
+    raw_default = config.get("stream", {}).get("default_voice", "heart").lstrip('!')
+    active_default = raw_default if raw_default.lower() in all_available else "heart"
 
     read_mode = config.get("stream", {}).get("read_mode", "all")
+    auto_chatter_voices = config.get("stream", {}).get("auto_chatter_voices", True)
+    chatter_voices = config.setdefault("chatter_voices", {})
+
+    sender_key = sender.strip().lower()
+    if auto_chatter_voices:
+        if sender_key not in chatter_voices:
+            import random
+            custom_files = [f.stem.lower() for f in VOICES_DIR.iterdir() if f.suffix.lower() in [".vfs", ".mp3", ".wav", ".ogg", ".flac"]] if VOICES_DIR.exists() else []
+            custom_pool = sorted(list(set([v.lower() for v in primary_voices if v.lower() not in kokoro_engine.voice_audio_cache] + custom_files)))
+
+            if is_pro_licensed() and custom_pool:
+                assigned_so_far = [data.get("voice", "").lower() for data in chatter_voices.values()]
+                unassigned_custom = [v for v in custom_pool if v not in assigned_so_far]
+                assigned_voice = random.choice(unassigned_custom) if unassigned_custom else random.choice(custom_pool)
+                voice_tag = "PRO Custom"
+            else:
+                kokoro_pool = list(kokoro_engine.voice_audio_cache.keys())
+                assigned_voice = random.choice(kokoro_pool) if kokoro_pool else active_default
+                voice_tag = "Kokoro Base"
+
+            chatter_voices[sender_key] = {
+                "voice": assigned_voice,
+                "display_name": sender.strip(),
+                "platform": platform,
+                "created_at": time.time()
+            }
+            save_config(config)
+            logger.info(f"[Chatter Voice] 🎲 Assigned {voice_tag} voice '!{assigned_voice}' to chatter '{sender}'")
+            asyncio.create_task(broadcast_ws({
+                "type": "chatter_voice_assigned",
+                "data": chatter_voices[sender_key],
+                "user": sender_key
+            }))
+        sender_assigned_voice = chatter_voices[sender_key].get("voice", active_default)
+    else:
+        sender_assigned_voice = active_default
+
     matched_voice = None
     speed_tag = ""
     speech_text = ""
@@ -267,7 +301,8 @@ async def handle_unified_chat(platform: str, channel: str, sender: str, message:
     if matched_voice:
         await tts_queue.put({"text": f"!{matched_voice}{speed_tag} {speech_text}", "sender": sender, "platform": platform, "volume": vol})
     elif read_mode == "all":
-        await tts_queue.put({"text": f"!{active_default} {speech_text}", "sender": sender, "platform": platform, "volume": vol})
+        target_v = sender_assigned_voice if auto_chatter_voices else active_default
+        await tts_queue.put({"text": f"!{target_v} {speech_text}", "sender": sender, "platform": platform, "volume": vol})
 
 async def scheduled_fire_callback(msg_text: str, source_tag: str):
     scheduler.log_activity(msg_text, source_tag)
@@ -355,7 +390,7 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
         return response
 
 # -------------------------------------------------------------
-# FastAPI App Instantiation (Created BEFORE any routes)
+# FastAPI App Instantiation
 # -------------------------------------------------------------
 app = FastAPI(title="VoiceForge Studio Pro", version="1.3.4", lifespan=lifespan)
 app.add_middleware(NoCacheMiddleware)
@@ -396,7 +431,7 @@ async def manual_shutdown_endpoint():
 async def get_license_status():
     lic = config.get("license", {})
     key = lic.get("key", "")
-    masked = f"{key[:4]}****{key[-4:]}" if len(key) >= 8 else ("PRO_DEV" if lic.get("pro") else "")
+    masked = f"{key[:4]}****{key[-4:]}" if len(key) >= 8 else ""
     return {
         "pro": is_pro_licensed(),
         "key_masked": masked,
@@ -404,32 +439,30 @@ async def get_license_status():
         "tier": "PRO" if is_pro_licensed() else "FREE"
     }
 
+# =============================================================
+# FIXED: Direct Gumroad Verifier - Always sends Y5ekd7PYG87jMvspw9YEDg==
+# =============================================================
 @app.post("/api/license/activate")
 async def activate_gumroad_license(data: dict):
     raw_key = data.get("license_key", "").strip()
-    raw_pid = data.get("product_id", "").strip()
+    import re
+    key = re.sub(r"[^a-zA-Z0-9\-]", "", raw_key)
 
-    # Clean whitespace while preserving valid hyphens
-    clean_key = raw_key.replace(" ", "")
+    if not key or len(key) < 6:
+        raise HTTPException(status_code=400, detail="Please enter your Gumroad license key.")
 
-    if not clean_key or len(clean_key) < 6:
-        raise HTTPException(status_code=400, detail="Please enter a valid Gumroad license key.")
-
-    # Target product_id: uses the value from the pre-filled box, config, or default
-    target_pid = raw_pid or config.get("gumroad_product_id") or "Y5ekd7PYG87jMvspw9YEDg=="
-
-    # Save to config so it persists
-    config["gumroad_product_id"] = target_pid
-    save_config(config)
+    # Target Product ID: Always uses your verified Gumroad Product ID
+    target_pid = data.get("product_id", "").strip() or config.get("gumroad_product_id", "").strip() or GUMROAD_PRODUCT_ID
 
     import httpx
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         try:
+            logger.info(f"[Gumroad] Verifying key {key[:8]}... with product_id={target_pid}")
             resp = await client.post(
                 "https://api.gumroad.com/v2/licenses/verify",
                 data={
                     "product_id": target_pid,
-                    "license_key": clean_key,
+                    "license_key": key,
                     "increment_uses_count": "false"
                 },
                 headers={"User-Agent": "VoiceForgeStudio/1.3.4"}
@@ -441,24 +474,25 @@ async def activate_gumroad_license(data: dict):
                 if not purchase.get("refunded", False) and not purchase.get("chargebacked", False):
                     buyer_email = purchase.get("email", "customer")
                     config["license"] = {
-                        "key": clean_key,
+                        "key": key,
                         "pro": True,
                         "email": buyer_email,
                         "activated_at": time.time()
                     }
                     save_config(config)
-                    logger.info(f"[License] VoiceForge PRO successfully unlocked for {buyer_email}!")
+                    logger.info(f"[License] ✓ VoiceForge PRO successfully unlocked for {buyer_email}!")
                     await broadcast_ws({"type": "license_updated", "pro": True})
                     return {"status": "success", "pro": True, "message": f"VoiceForge PRO Activated! ({buyer_email})"}
                 else:
                     raise HTTPException(status_code=400, detail="This license has been refunded or cancelled.")
             else:
                 err_msg = res_data.get("message", f"Gumroad error (HTTP {resp.status_code})")
-                raise HTTPException(status_code=400, detail=f"Gumroad API: {err_msg}")
+                logger.error(f"[Gumroad Rejection] {err_msg}")
+                raise HTTPException(status_code=400, detail=f"Gumroad: {err_msg}")
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"[License Error] {e}")
+            logger.error(f"[License Connection Error] {e}")
             raise HTTPException(status_code=500, detail=f"Network error contacting Gumroad: {e}")
 
 @app.post("/api/license/deactivate")
@@ -468,6 +502,63 @@ async def deactivate_license():
     logger.info("[License] VoiceForge reverted to Free Tier.")
     await broadcast_ws({"type": "license_updated", "pro": False})
     return {"status": "deactivated", "pro": False}
+
+# Chatter Voices API
+@app.get("/api/chatter-voices")
+async def get_chatter_voices():
+    return {
+        "status": "success",
+        "enabled": config.get("stream", {}).get("auto_chatter_voices", True),
+        "chatter_voices": config.get("chatter_voices", {})
+    }
+
+@app.post("/api/chatter-voices/toggle")
+async def toggle_chatter_voices(data: dict):
+    enabled = bool(data.get("enabled", True))
+    config.setdefault("stream", {})["auto_chatter_voices"] = enabled
+    save_config(config)
+    await broadcast_ws({"type": "chatter_voices_toggled", "enabled": enabled})
+    return {"status": "success", "enabled": enabled}
+
+@app.post("/api/chatter-voices/assign")
+async def assign_chatter_voice_endpoint(data: dict):
+    username = data.get("username", "").strip().lower()
+    voice = data.get("voice", "heart").replace("!", "").strip().lower()
+    display_name = data.get("display_name", username).strip()
+    platform = data.get("platform", "Chat").strip()
+
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required.")
+
+    cv = config.setdefault("chatter_voices", {})
+    cv[username] = {
+        "voice": voice,
+        "display_name": display_name or username,
+        "platform": platform,
+        "updated_at": time.time()
+    }
+    save_config(config)
+    logger.info(f"[Chatter Directory] Assigned voice '!{voice}' to chatter '{display_name}'")
+    await broadcast_ws({"type": "chatter_voice_updated", "data": cv[username], "user": username})
+    return {"status": "success", "user": username, "entry": cv[username]}
+
+@app.delete("/api/chatter-voices/{username}")
+async def delete_chatter_voice(username: str):
+    u = username.strip().lower()
+    cv = config.setdefault("chatter_voices", {})
+    if u in cv:
+        del cv[u]
+        save_config(config)
+        await broadcast_ws({"type": "chatter_voice_deleted", "user": u})
+        return {"status": "deleted", "user": u}
+    return {"status": "not_found", "user": u}
+
+@app.post("/api/chatter-voices/clear")
+async def clear_all_chatter_voices():
+    config["chatter_voices"] = {}
+    save_config(config)
+    await broadcast_ws({"type": "chatter_voices_cleared"})
+    return {"status": "cleared"}
 
 @app.get("/api/sources")
 async def get_all_sources():
@@ -604,7 +695,7 @@ async def get_engine_state():
 
 @app.post("/api/engine/switch")
 async def switch_engine(data: dict):
-    eng = data.get("engine", "cosyvoice2")
+    eng = data.get("engine", "kokoro")
     if eng != "kokoro" and not is_pro_licensed():
         raise HTTPException(status_code=403, detail="VoiceForge PRO license required to activate custom cloning engines.")
     engine_mgr.switch_engine(eng)
@@ -694,7 +785,9 @@ async def preview_voice(name: str, phrase: Optional[str] = None):
         elif eng_name == "qwen3_tts": active_model_label = "Qwen3 TTS"
         else: active_model_label = "Kokoro 82M"
 
-    if phrase and phrase.strip() and "[voice]" not in phrase:
+    if not is_pro_licensed() and v_clean not in KOKORO_VOICES:
+        text = f"Hello! This is {name.capitalize()}. Custom voice cloning requires VoiceForge PRO. Running Kokoro in Free mode."
+    elif phrase and phrase.strip() and "[voice]" not in phrase:
         text = phrase.strip()
     else:
         text = f"Hello! This is {name.capitalize()}, running live on {active_model_label}."
@@ -748,7 +841,7 @@ async def add_timed_message(data: dict):
         "type": data.get("type", "interval"),
         "interval_min": int(data.get("interval_min", 10)),
         "time": data.get("time", "12:00"),
-        "voice": data.get("voice", "ron"),
+        "voice": data.get("voice", "heart"),
         "message": data.get("message", ""),
         "enabled": True,
         "next_fire": time.time() + (int(data.get("interval_min", 10)) * 60),
@@ -838,7 +931,7 @@ async def save_command(data: dict):
     cmd = {
         "id": data.get("id", f"c_{int(time.time()*1000)}"),
         "name": cmd_name,
-        "voice": data.get("voice", "ron"),
+        "voice": data.get("voice", "heart"),
         "response": data.get("response", ""),
         "cooldown": int(data.get("cooldown", 10)),
         "enabled": data.get("enabled", True)
@@ -992,16 +1085,48 @@ async def verify_model_installation(model_id: str):
 async def delete_model_endpoint(model_id: str):
     if model_id == engine_mgr.active_engine_name:
         raise HTTPException(status_code=400, detail="Cannot delete currently active engine. Switch engine first.")
-    m_path = find_model_path(model_id)
-    if not m_path or not m_path.exists():
-        return {"status": "not_found", "message": "Model cache not found or already deleted."}
-    try:
-        if m_path.is_dir(): shutil.rmtree(m_path)
-        else: m_path.unlink()
-        model_download_status[model_id] = "idle"
-        return {"status": "deleted", "model_id": model_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete model: {e}")
+    
+    info = MODELS_CATALOG.get(model_id, {})
+    folder_name = info.get("folder", model_id)
+    repo = info.get("repo_id", "").replace("/", "--")
+    cleaned = False
+
+    import stat
+    def force_delete(p: Path):
+        def on_err(func, path_str, exc_info):
+            try:
+                os.chmod(path_str, stat.S_IWRITE)
+                func(path_str)
+            except Exception: pass
+        if p.is_file():
+            try:
+                os.chmod(str(p), stat.S_IWRITE)
+                p.unlink()
+            except Exception: pass
+        elif p.is_dir():
+            try: shutil.rmtree(str(p), onerror=on_err)
+            except Exception: pass
+
+    # 1. Local pretrained_models
+    local_p = BASE_DIR / "pretrained_models" / folder_name
+    if local_p.exists():
+        force_delete(local_p)
+        cleaned = True
+
+    # 2. HuggingFace cache
+    hf_hub = Path.home() / ".cache" / "huggingface" / "hub"
+    if hf_hub.exists() and repo:
+        for d in hf_hub.iterdir():
+            if d.is_dir() and repo.lower() in d.name.lower():
+                force_delete(d)
+                cleaned = True
+
+    model_download_status[model_id] = "idle"
+    if model_id == "chatterbox_nano" and hasattr(engine_mgr, "engines") and "chatterbox_nano" in engine_mgr.engines:
+        engine_mgr.engines["chatterbox_nano"].model = None
+
+    await broadcast_ws({"type": "model_status_updated", "model_id": model_id})
+    return {"status": "deleted", "model_id": model_id, "cleaned": cleaned}
 
 @app.post("/api/models/{model_id}/download")
 async def download_model_endpoint(model_id: str):
@@ -1116,7 +1241,6 @@ async def ws_live(websocket: WebSocket):
         while True: await websocket.receive_text()
     except WebSocketDisconnect:
         if websocket in active_websockets: active_websockets.remove(websocket)
-        asyncio.create_task(delayed_shutdown_check())
 
 @app.websocket("/ws/reader")
 async def ws_reader(websocket: WebSocket):
@@ -1138,7 +1262,6 @@ async def ws_reader(websocket: WebSocket):
             await broadcast_reader({"type": "config", "reader": config["reader"]})
     except WebSocketDisconnect:
         if websocket in reader_websockets: reader_websockets.remove(websocket)
-        asyncio.create_task(delayed_shutdown_check())
 
 @app.websocket("/ws/chat/{source_id}")
 async def ws_source_chat(websocket: WebSocket, source_id: str):
