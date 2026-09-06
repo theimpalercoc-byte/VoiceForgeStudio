@@ -708,9 +708,9 @@
     function populateManualChatterVoicesDropdown() {
       const sel = safeEl("manual-chatter-voice");
       if (!sel) return;
-      const customOpts = clonedVoicesList.map(v => `<option value="${v}">!${v} (Custom)</option>`).join("");
-      const kokoroOpts = kokoroVoicesList.map(v => `<option value="${v}">!${v}</option>`).join("");
-      sel.innerHTML = `<optgroup label="Custom Cloned">${customOpts}</optgroup><optgroup label="Kokoro Neural">${kokoroOpts}</optgroup>`;
+      const customOpts = clonedVoicesList.map(v => `<option value="${v}">⭐ !${v} (PRO Custom)</option>`).join("");
+      const kokoroOpts = kokoroVoicesList.map(v => `<option value="${v}">!${v} (Kokoro)</option>`).join("");
+      sel.innerHTML = `<optgroup label="🚀 PRO Custom Cloned Voices (First Priority)">${customOpts}</optgroup><optgroup label="🌸 Kokoro Multilingual Voices">${kokoroOpts}</optgroup>`;
     }
 
     function renderChatterTable() {
@@ -771,9 +771,15 @@
     }
 
     async function rerollChatterVoice(username, displayName, platform) {
-      const allPool = [...kokoroVoicesList, ...(isProActive ? clonedVoicesList : [])];
-      if (allPool.length === 0) return;
-      const newV = allPool[Math.floor(Math.random() * allPool.length)];
+      let pool = [];
+      if (isProActive && clonedVoicesList.length > 0) {
+        // PRO: Prioritize custom cloned models first
+        pool = clonedVoicesList;
+      } else {
+        pool = kokoroVoicesList;
+      }
+      if (pool.length === 0) pool = [...clonedVoicesList, ...kokoroVoicesList];
+      const newV = pool[Math.floor(Math.random() * pool.length)];
       await updateChatterVoice(username, newV, displayName, platform);
       renderChatterTable();
     }
