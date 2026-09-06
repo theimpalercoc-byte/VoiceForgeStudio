@@ -36,7 +36,7 @@ jobs:
 
           Copy-Item VoiceForgeStudio.exe, run_voiceforge.bat, setup.bat, setup_portable_runtime.ps1, icon.ico, config.json, filter_rules.json, README.md $Dist\
           Copy-Item app.py, chat_sources.py, engine_manager.py, kokoro_engine.py, audio_filter.py, scheduler.py $Dist\
-          Copy-Item index.html, reader.html $Dist\
+          Copy-Item index.html, reader.html, "VoiceForge Master Studio Manual.pdf" $Dist\
 
           if (Test-Path "voices\*") { Copy-Item -Recurse voices "$Dist\voices" }
 
