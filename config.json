@@ -2,7 +2,8 @@
   "stream_reading": true,
   "stream": {
     "default_voice": "heart",
-    "read_mode": "all"
+    "read_mode": "all",
+    "auto_chatter_voices": true
   },
   "engine": {
     "active": "kokoro",
@@ -82,5 +83,6 @@
     }
   ],
   "event_triggers": [],
-  "gumroad_product_id": "Y5ekd7PYG87jMvspw9YEDg=="
+  "gumroad_product_id": "Y5ekd7PYG87jMvspw9YEDg==",
+  "chatter_voices": {}
 }

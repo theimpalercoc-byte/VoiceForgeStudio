@@ -307,6 +307,11 @@
               <option value="commands_only">⌨️ Commands Only (!name)</option>
             </select>
           </div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.82rem; color:#38bdf8; font-weight:700; cursor:pointer;" title="Assigns each chatter a distinct voice and remembers them for every stream">
+            <input type="checkbox" id="chk-auto-chatter-voices" onchange="toggleAutoChatterVoices(this.checked)" style="cursor:pointer;" checked>
+            <span>🎲 Auto-Assign Chatter Voices</span>
+          </label>
+          <button class="btn btn-secondary" style="border-color:#38bdf8; color:#38bdf8; padding:5px 12px; font-size:0.8rem; font-weight:700;" onclick="openChatterDirectory()">👥 Chatter Directory (<span id="count-chatter-voices">0</span>)</button>
           <button id="btn-browser-view" class="btn btn-secondary" style="border-color:#38bdf8; color:#38bdf8;" onclick="toggleBrowserVisibility()">👁️ Show Browser to Verify / Log In</button>
           <button class="btn btn-forge" onclick="openModal('sources-modal')">＋ Add Source</button>
         </div>
@@ -666,6 +671,137 @@
           statusBox.textContent = "Connection error verifying license: " + e.message;
         }
       }
+    }
+
+    
+    let chatterVoicesMap = {};
+    let allVoiceOptionsCache = [];
+
+    async function loadChatterVoices() {
+      try {
+        const res = await fetch("/api/chatter-voices");
+        const d = await res.json();
+        chatterVoicesMap = d.chatter_voices || {};
+        
+        const chk = safeEl("chk-auto-chatter-voices");
+        if (chk) chk.checked = (d.enabled === true);
+
+        safeSetText("count-chatter-voices", Object.keys(chatterVoicesMap).length);
+        renderChatterTable();
+      } catch (e) {}
+    }
+
+    async function toggleAutoChatterVoices(enabled) {
+      await fetch("/api/chatter-voices/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled })
+      });
+    }
+
+    function openChatterDirectory() {
+      populateManualChatterVoicesDropdown();
+      loadChatterVoices();
+      openModal("chatter-voices-modal");
+    }
+
+    function populateManualChatterVoicesDropdown() {
+      const sel = safeEl("manual-chatter-voice");
+      if (!sel) return;
+      const customOpts = clonedVoicesList.map(v => `<option value="${v}">!${v} (Custom)</option>`).join("");
+      const kokoroOpts = kokoroVoicesList.map(v => `<option value="${v}">!${v}</option>`).join("");
+      sel.innerHTML = `<optgroup label="Custom Cloned">${customOpts}</optgroup><optgroup label="Kokoro Neural">${kokoroOpts}</optgroup>`;
+    }
+
+    function renderChatterTable() {
+      const tbody = safeEl("chatter-voices-tbody");
+      if (!tbody) return;
+
+      const q = (safeEl("search-chatter-input")?.value || "").toLowerCase().trim();
+      const entries = Object.entries(chatterVoicesMap).filter(([k, v]) => {
+        return !q || k.includes(q) || (v.display_name && v.display_name.toLowerCase().includes(q)) || (v.voice && v.voice.toLowerCase().includes(q));
+      });
+
+      if (entries.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding:20px;">No chatters recorded yet. Chatters will appear here automatically when they type in stream!</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = entries.map(([userKey, data]) => {
+        const currentV = (data.voice || "heart").toLowerCase();
+        const disp = data.display_name || userKey;
+        const plat = (data.platform || "Chat").toUpperCase();
+        
+        const voiceSelectOptions = [
+          ...clonedVoicesList.map(v => `<option value="${v}" ${v.toLowerCase() === currentV ? 'selected' : ''}>!${v} (Custom)</option>`),
+          ...kokoroVoicesList.map(v => `<option value="${v}" ${v.toLowerCase() === currentV ? 'selected' : ''}>!${v}</option>`)
+        ].join("");
+
+        return `
+          <tr>
+            <td><b style="color:#f8fafc;">${disp}</b></td>
+            <td><span class="badge-pill" style="background:#1e293b; color:#38bdf8;">${plat}</span></td>
+            <td>
+              <select style="padding:4px 8px; font-size:0.8rem; width:160px;" onchange="updateChatterVoice('${userKey}', this.value, '${disp}', '${plat}')">
+                ${voiceSelectOptions}
+              </select>
+            </td>
+            <td style="display:flex; gap:6px;">
+              <button class="btn btn-secondary" style="padding:3px 8px; font-size:0.72rem;" onclick="previewVoice('${currentV}')">▶ Preview</button>
+              <button class="btn btn-forge" style="padding:3px 8px; font-size:0.72rem;" onclick="rerollChatterVoice('${userKey}', '${disp}', '${plat}')" title="Assign another random voice">🎲 Re-roll</button>
+              <button class="btn btn-danger" style="padding:3px 8px; font-size:0.72rem;" onclick="deleteChatterVoice('${userKey}')">✕</button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function filterChatterTable() {
+      renderChatterTable();
+    }
+
+    async function updateChatterVoice(username, voice, displayName, platform) {
+      await fetch("/api/chatter-voices/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, voice, display_name: displayName, platform })
+      });
+      chatterVoicesMap[username] = { voice, display_name: displayName, platform };
+      safeSetText("count-chatter-voices", Object.keys(chatterVoicesMap).length);
+    }
+
+    async function rerollChatterVoice(username, displayName, platform) {
+      const allPool = [...kokoroVoicesList, ...(isProActive ? clonedVoicesList : [])];
+      if (allPool.length === 0) return;
+      const newV = allPool[Math.floor(Math.random() * allPool.length)];
+      await updateChatterVoice(username, newV, displayName, platform);
+      renderChatterTable();
+    }
+
+    async function addManualChatterAssignment() {
+      const uEl = safeEl("manual-chatter-name");
+      const vEl = safeEl("manual-chatter-voice");
+      if (!uEl || !uEl.value.trim()) return alert("Please enter a chatter username.");
+      const username = uEl.value.trim();
+      const voice = vEl ? vEl.value : "heart";
+      await updateChatterVoice(username.toLowerCase(), voice, username, "Manual");
+      uEl.value = "";
+      renderChatterTable();
+    }
+
+    async function deleteChatterVoice(username) {
+      await fetch(`/api/chatter-voices/${username}`, { method: "DELETE" });
+      delete chatterVoicesMap[username];
+      safeSetText("count-chatter-voices", Object.keys(chatterVoicesMap).length);
+      renderChatterTable();
+    }
+
+    async function clearAllChatterVoices() {
+      if (!confirm("Are you sure you want to reset all assigned chatter voices? They will be randomized again next time they chat.")) return;
+      await fetch("/api/chatter-voices/clear", { method: "POST" });
+      chatterVoicesMap = {};
+      safeSetText("count-chatter-voices", 0);
+      renderChatterTable();
     }
 
     function safeEl(id) { return document.getElementById(id); }
@@ -1873,6 +2009,12 @@
             if (typeof loadModelStatus === "function") loadModelStatus();
           } else if (msg.type === "source_status") {
             if (typeof loadSources === "function") loadSources();
+          } else if (msg.type === "chatter_voice_assigned" || msg.type === "chatter_voice_updated") {
+            if (msg.user && msg.data) {
+              chatterVoicesMap[msg.user] = msg.data;
+              safeSetText("count-chatter-voices", Object.keys(chatterVoicesMap).length);
+              renderChatterTable();
+            }
           } else if (msg.type === "filter_event") {
             if (typeof loadAudioLog === "function") loadAudioLog();
           } else if (msg.type === "chat_message") {
@@ -1893,7 +2035,7 @@
       ws.onclose = () => setTimeout(connectLiveWS, 3000);
     }
 
-    connectLiveWS(); checkLicenseStatus();
+    connectLiveWS(); loadChatterVoices(); checkLicenseStatus();
     loadVoices();
     loadEngineSettings();
     switchTab(localStorage.getItem("activeTab") || "tab-sources");
@@ -1985,6 +2127,45 @@
           <button class="btn btn-secondary" onclick="closeModal('license-modal')">Cancel</button>
           <button class="btn btn-forge" style="background:linear-gradient(135deg,#f59e0b,#f43f5e);" onclick="activateLicenseKey()">⭐ Activate PRO</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Chatter Voice Directory Modal -->
+  <div class="modal" id="chatter-voices-modal">
+    <div class="modal-content" style="max-width:760px; background:#0f172a; border:1px solid #38bdf8;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--glass-border); padding-bottom:10px;">
+        <div>
+          <h3 style="color:#38bdf8; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+            <span>👥</span> Chatter Voice Directory & Identity Manager
+          </h3>
+          <span style="font-size:0.75rem; color:var(--text-dim);">Each chatter is remembered with their assigned voice. Change or re-roll any voice below.</span>
+        </div>
+        <button class="btn btn-secondary" style="padding:2px 8px;" onclick="closeModal('chatter-voices-modal')">✕</button>
+      </div>
+
+      <!-- Quick Add Chatter Bar -->
+      <div style="background:rgba(0,0,0,0.35); padding:10px 14px; border-radius:10px; border:1px solid var(--glass-border); display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+        <input type="text" id="manual-chatter-name" placeholder="Chatter username..." style="width:170px; padding:6px 10px; font-size:0.82rem;">
+        <select id="manual-chatter-voice" style="width:160px; padding:6px 10px; font-size:0.82rem;"></select>
+        <button class="btn btn-forge" style="padding:6px 14px; font-size:0.8rem;" onclick="addManualChatterAssignment()">+ Assign Voice</button>
+        <input type="text" id="search-chatter-input" placeholder="🔍 Search chatters..." oninput="filterChatterTable()" style="margin-left:auto; width:160px; padding:6px 10px; font-size:0.82rem;">
+      </div>
+
+      <!-- Chatters Table -->
+      <div style="max-height:380px; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); border-radius:10px;">
+        <table>
+          <thead>
+            <tr><th>Chatter</th><th>Platform</th><th>Assigned Voice</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="chatter-voices-tbody"></tbody>
+        </table>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; border-top:1px solid var(--glass-border); padding-top:10px;">
+        <button class="btn btn-danger" style="padding:4px 12px; font-size:0.75rem;" onclick="clearAllChatterVoices()">🗑️ Reset All Saved Chatters</button>
+        <button class="btn btn-secondary" onclick="closeModal('chatter-voices-modal')">Close</button>
       </div>
     </div>
   </div>
