@@ -634,13 +634,11 @@
       }
 
       try {
-        const pidInput = safeEl("gumroad-product-id-input");
         const res = await fetch("/api/license/activate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
-            license_key: input.value.trim(),
-            product_id: pidInput ? pidInput.value.trim() : ""
+            license_key: input.value.trim()
           })
         });
         const d = await res.json();
@@ -1973,13 +1971,9 @@
           </div>
         </div>
 
-        <div style="margin-top:4px;">
-          <label style="font-size:0.8rem; color:#fed7aa; font-weight:700;">ENTER GUMROAD LICENSE KEY:</label>
-          <input type="text" id="gumroad-license-input" placeholder="e.g. XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX" style="margin-top:6px; font-family:monospace;">
-        </div>
-        <div style="margin-top:8px;">
-          <label style="font-size:0.75rem; color:var(--text-dim); font-weight:700;">GUMROAD PRODUCT ID (Optional / From Share -> API):</label>
-          <input type="text" id="gumroad-product-id-input" placeholder="e.g. WJ3xqLN8aPbnaTRsSrU8oA== (leave blank to auto-detect)" style="margin-top:4px; font-family:monospace; font-size:0.8rem;">
+        <div style="margin-top:10px;">
+          <label style="font-size:0.85rem; color:#fed7aa; font-weight:700;">ENTER GUMROAD LICENSE KEY:</label>
+          <input type="text" id="gumroad-license-input" placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX" style="margin-top:6px; font-family:monospace; font-size:0.95rem; text-align:center; padding:10px;">
         </div>
 
         <div id="license-status-msg" style="font-size:0.82rem; padding:8px; border-radius:8px; display:none;"></div>
