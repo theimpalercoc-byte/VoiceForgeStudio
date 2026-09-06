@@ -60,6 +60,9 @@ echo Installing Isolated Playwright Chromium...
 set "PLAYWRIGHT_BROWSERS_PATH=%~dp0runtime\playwright-browsers"
 runtime\python.exe -m playwright install chromium
 
+:: Enforce stable NumPy 1.x for PyTorch & Kokoro ABI stability
+runtime\python.exe -m pip install "numpy<2.0.0" --no-warn-script-location
+
 echo.
 echo ========================================================
 echo   🎉 VoiceForge Studio Setup Completed Successfully!

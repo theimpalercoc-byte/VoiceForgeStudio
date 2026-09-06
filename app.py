@@ -411,37 +411,12 @@ async def activate_gumroad_license(data: dict):
     if not key:
         raise HTTPException(status_code=400, detail="Please enter your license key.")
 
-    # Master Developer Key Bypass for Testing
-    if key.upper() == "VF-PRO-2026" or key.startswith("VF-PRO-"):
-        config["license"] = {
-            "key": key,
-            "pro": True,
-            "email": "developer@voiceforge.studio",
-            "activated_at": time.time()
-        }
-        save_config(config)
-        logger.info("[License] VoiceForge PRO unlocked via Master Developer Key!")
-        await broadcast_ws({"type": "license_updated", "pro": True})
-        return {"status": "success", "pro": True, "message": "VoiceForge PRO Activated (Master Key)!"}
 
-    # Build list of verification candidates
-    attempts = []
-    if custom_product_id:
-        attempts.append(("product_id", custom_product_id))
-        config["gumroad_product_id"] = custom_product_id
-        save_config(config)
+    # Production Gumroad Key Validation
+    if not key or len(key) < 8:
+        raise HTTPException(status_code=400, detail="Please enter a valid Gumroad license key.")
 
-    # Common permutations for your product
-    attempts.append(("product_id", "onvkcq"))
-    attempts.append(("product_id", "voiceforge_pro"))
-    attempts.append(("product_permalink", "voiceforge_pro"))
-    attempts.append(("product_permalink", "onvkcq"))
-
-    last_error = "Could not verify license."
-    verified_data = None
-
-    for param_name, param_val in attempts:
-        try:
+    try:
             req_data = urllib.parse.urlencode({
                 param_name: param_val,
                 "license_key": key,
