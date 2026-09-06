@@ -122,6 +122,7 @@ logging.getLogger().addHandler(ws_log_handler)
 
 # 4. Gumroad PRO License State Checker
 GUMROAD_PRODUCT_PERMALINK = "voiceforge_pro"
+GUMROAD_PRODUCT_ID = "Y5ekd7PYG87jMvspw9YEDg=="
 
 def is_pro_licensed() -> bool:
     lic = config.get("license", {})
