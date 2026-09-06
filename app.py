@@ -408,66 +408,53 @@ async def get_license_status():
 async def activate_gumroad_license(data: dict):
     raw_key = data.get("license_key", "").strip()
     import re
-    # Strip any invisible whitespace or trailing characters copied from email receipts
+    # Clean whitespace or formatting
     key = re.sub(r"[^a-zA-Z0-9\-]", "", raw_key)
 
     if not key or len(key) < 8:
         raise HTTPException(status_code=400, detail="Please enter a valid Gumroad license key.")
 
     import httpx
-    # Test all variations: official Product ID first, then permalinks
-    candidates = [
-        ("product_id", GUMROAD_PRODUCT_ID),
-        ("product_permalink", "voiceforge_pro"),
-        ("product_id", "onvkcq"),
-        ("product_permalink", "onvkcq")
-    ]
-
-    last_error = "Could not verify license key."
-    verified_purchase = None
+    # Verified Gumroad Product ID for VoiceForge Studio Pro
+    GUMROAD_PRODUCT_ID = "Y5ekd7PYG87jMvspw9YEDg=="
 
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        for param_key, param_val in candidates:
-            try:
-                resp = await client.post(
-                    "https://api.gumroad.com/v2/licenses/verify",
-                    data={
-                        param_key: param_val,
-                        "license_key": key,
-                        "increment_uses_count": "false"
-                    },
-                    headers={"User-Agent": "VoiceForgeStudio/1.3.4"}
-                )
-                res_data = resp.json()
-                if resp.status_code == 200 and res_data.get("success"):
-                    purchase = res_data.get("purchase", {})
-                    if not purchase.get("refunded", False) and not purchase.get("chargebacked", False):
-                        verified_purchase = purchase
-                        logger.info(f"[Gumroad API] ✓ License verified using {param_key}={param_val}")
-                        break
-                    else:
-                        last_error = "This license has been refunded or cancelled."
-                else:
-                    msg = res_data.get("message", f"HTTP {resp.status_code}")
-                    last_error = msg
-            except Exception as e:
-                last_error = f"Network request error: {e}"
+        try:
+            resp = await client.post(
+                "https://api.gumroad.com/v2/licenses/verify",
+                data={
+                    "product_id": GUMROAD_PRODUCT_ID,
+                    "license_key": key,
+                    "increment_uses_count": "false"
+                },
+                headers={"User-Agent": "VoiceForgeStudio/1.3.4"}
+            )
+            res_data = resp.json()
 
-    if verified_purchase:
-        buyer_email = verified_purchase.get("email", "customer")
-        config["license"] = {
-            "key": key,
-            "pro": True,
-            "email": buyer_email,
-            "activated_at": time.time()
-        }
-        save_config(config)
-        logger.info(f"[License] VoiceForge PRO successfully unlocked for {buyer_email}!")
-        await broadcast_ws({"type": "license_updated", "pro": True})
-        return {"status": "success", "pro": True, "message": f"VoiceForge PRO Activated! ({buyer_email})"}
-    else:
-        logger.error(f"[License Verification Failed] {last_error}")
-        raise HTTPException(status_code=400, detail=f"Gumroad: {last_error}")
+            if resp.status_code == 200 and res_data.get("success"):
+                purchase = res_data.get("purchase", {})
+                if not purchase.get("refunded", False) and not purchase.get("chargebacked", False):
+                    buyer_email = purchase.get("email", "customer")
+                    config["license"] = {
+                        "key": key,
+                        "pro": True,
+                        "email": buyer_email,
+                        "activated_at": time.time()
+                    }
+                    save_config(config)
+                    logger.info(f"[License] VoiceForge PRO unlocked for {buyer_email}!")
+                    await broadcast_ws({"type": "license_updated", "pro": True})
+                    return {"status": "success", "pro": True, "message": f"VoiceForge PRO Activated! ({buyer_email})"}
+                else:
+                    raise HTTPException(status_code=400, detail="This license has been refunded or cancelled.")
+            else:
+                err_msg = res_data.get("message", f"Gumroad error (HTTP {resp.status_code})")
+                raise HTTPException(status_code=400, detail=f"Gumroad: {err_msg}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[License Error] {e}")
+            raise HTTPException(status_code=500, detail=f"Network error contacting Gumroad: {e}")
 
 @app.post("/api/license/deactivate")
 async def deactivate_license():
