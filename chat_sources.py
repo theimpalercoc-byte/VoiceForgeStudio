@@ -15,6 +15,7 @@ logger = logging.getLogger("ChatSources")
 BASE_DIR = Path(__file__).resolve().parent
 BROWSER_PROFILE_DIR = BASE_DIR / "browser_profile"
 BROWSER_PROFILE_DIR.mkdir(exist_ok=True)
+STORAGE_STATE_PATH = BROWSER_PROFILE_DIR / "storage_state.json"
 
 # Ensure Playwright always finds the isolated portable Chromium
 pw_browsers = BASE_DIR / "runtime" / "playwright-browsers"
@@ -157,6 +158,14 @@ class ChatSourceManager:
             del self.sources[source_id]
 
     async def toggle_browser_visibility(self, visible: bool):
+        # Save session cookies & authentication state to disk before toggling
+        if self.context:
+            try:
+                await self.context.storage_state(path=str(STORAGE_STATE_PATH))
+                logger.info("[Persistent Profile] ✓ Saved login session and cookies to storage_state.json!")
+            except Exception as e:
+                logger.debug(f"Notice saving storage state: {e}")
+
         self.headless = not visible
         for sid, p in list(self.pages.items()):
             try: await p.close()
@@ -291,10 +300,24 @@ class ChatSourceManager:
 
             self.playwright = await async_playwright().start()
 
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir=str(BROWSER_PROFILE_DIR),
-                executable_path=BRAVE_PATH if (BRAVE_PATH and os.path.exists(BRAVE_PATH)) else None,
-                headless=self.headless,
+            launch_kwargs = {
+                "user_data_dir": str(BROWSER_PROFILE_DIR),
+                "headless": self.headless,
+                "args": [
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--window-size=1280,900"
+                ],
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "viewport": {"width": 1280, "height": 900}
+            }
+            if BRAVE_PATH and os.path.exists(BRAVE_PATH):
+                launch_kwargs["executable_path"] = BRAVE_PATH
+
+            self.context = await self.playwright.chromium.launch_persistent_context(**launch_kwargs)
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
