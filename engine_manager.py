@@ -411,37 +411,48 @@ class EngineManager:
             is_kokoro = (v_clean in KOKORO_VOICES)
 
             if is_kokoro:
-                p = {"speed": speed_override if speed_override is not None else 1.0}
-                seg_wav = kokoro_engine.generate(seg_text, v_clean, p)
-                seg_sr = kokoro_engine.sr
+                try:
+                    p = {"speed": speed_override if speed_override is not None else 1.0}
+                    seg_wav = kokoro_engine.generate(seg_text, v_clean, p)
+                    seg_sr = kokoro_engine.sr
+                except Exception as k_err:
+                    logger.error(f"[Kokoro Synthesis Error] Failed on '{v_clean}': {k_err}")
+                    # Fallback tone/heart
+                    seg_wav = kokoro_engine.generate(seg_text, "af_heart", {"speed": 1.0})
+                    seg_sr = kokoro_engine.sr
             else:
-                # Custom Cloned Voice requested (apple, bane, etc.)
+                # Custom Cloned Voice (apple, bane, etc.)
                 if not check_pro_unlocked():
-                    # FREE TIER: Safely route to Kokoro without errors or auto-downloads
-                    logger.info(f"[Free Tier] Custom voice '{v_clean}' requested. Spoken with Kokoro default.")
+                    logger.info(f"[Free Tier] Custom voice '{v_clean}' requested without PRO. Speaking with Kokoro base.")
                     seg_wav = kokoro_engine.generate(seg_text, "af_heart", {"speed": speed_override if speed_override is not None else 1.0})
                     seg_sr = kokoro_engine.sr
                 else:
-                    # PRO TIER: Use active custom cloning engine
+                    # PRO Tier: Handled by active custom partner engine
                     act_eng = self.get_active_custom()
-                    if getattr(act_eng, "model", None) is None:
-                        logger.warning(f"[PRO Notice] Active model '{act_eng.name}' has not downloaded weights yet. Using Kokoro fallback.")
+                    try:
+                        if getattr(act_eng, "model", None) is None:
+                            act_eng.init_model()
+
+                        if getattr(act_eng, "model", None) is not None:
+                            p = self.engine_params.get(self.active_custom_engine, {}).copy()
+                            try:
+                                from app import config as app_cfg
+                                v_prof = app_cfg.get("voice_profiles", {}).get(v_clean, {})
+                                p.update(v_prof)
+                            except Exception:
+                                pass
+
+                            seg_wav = act_eng.generate(seg_text, v_clean, p)
+                            seg_sr = getattr(act_eng, "sr", 24000)
+
+                            if speed_override is not None and abs(speed_override - 1.0) > 0.05:
+                                seg_wav = adjust_speed(seg_wav, seg_sr, speed_override)
+                        else:
+                            raise RuntimeError(f"Custom model '{act_eng.name}' weights are not downloaded yet.")
+                    except Exception as custom_err:
+                        logger.error(f"[Custom Engine Warning] '{v_clean}' synthesis failed on {act_eng.name}: {custom_err}. Using Kokoro fallback.")
                         seg_wav = kokoro_engine.generate(seg_text, "af_heart", {"speed": speed_override if speed_override is not None else 1.0})
                         seg_sr = kokoro_engine.sr
-                    else:
-                        p = self.engine_params.get(self.active_engine_name, {}).copy()
-                        try:
-                            from app import config as app_cfg
-                            v_prof = app_cfg.get("voice_profiles", {}).get(v_clean, {})
-                            p.update(v_prof)
-                        except Exception:
-                            pass
-
-                        seg_wav = act_eng.generate(seg_text, v_clean, p)
-                        seg_sr = getattr(act_eng, "sr", 24000)
-
-                        if speed_override is not None and abs(speed_override - 1.0) > 0.05:
-                            seg_wav = adjust_speed(seg_wav, seg_sr, speed_override)
 
             if seg_sr != target_sr:
                 seg_tensor = torch.from_numpy(seg_wav).unsqueeze(0).float()

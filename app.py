@@ -804,7 +804,7 @@ async def preview_voice(name: str, phrase: Optional[str] = None):
     if v_clean in KOKORO_VOICES:
         active_model_label = "Kokoro 82M"
     else:
-        eng_name = engine_mgr.active_engine_name
+        eng_name = engine_mgr.active_custom_engine
         if eng_name == "chatterbox_nano": active_model_label = "Chatterbox Turbo"
         elif eng_name == "cosyvoice2": active_model_label = "CosyVoice 2"
         elif eng_name == "qwen3_tts": active_model_label = "Qwen3 TTS"
@@ -818,12 +818,15 @@ async def preview_voice(name: str, phrase: Optional[str] = None):
         text = f"Hello! This is {name.capitalize()}, running live on {active_model_label}."
 
     logger.info(f"[Voice Preview] Synthesizing '!{name}' using active engine [{active_model_label}]...")
-    wav_np, sr = await asyncio.to_thread(engine_mgr.generate_multi, f"!{name} {text}", 1.0)
-
-    buf = io.BytesIO()
-    sf.write(buf, wav_np, sr, format="WAV")
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="audio/wav", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    try:
+        wav_np, sr = await asyncio.to_thread(engine_mgr.generate_multi, f"!{name} {text}", 1.0)
+        buf = io.BytesIO()
+        sf.write(buf, wav_np, sr, format="WAV")
+        buf.seek(0)
+        return StreamingResponse(buf, media_type="audio/wav", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    except Exception as e:
+        logger.error(f"[Preview Error] Failed on '{name}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/voices/{name}/benchmark")
 async def benchmark_voice_speed(name: str, payload: dict = None):
@@ -1244,17 +1247,23 @@ async def manual_generate(payload: dict):
     text = payload.get("text", "").strip()
     if not text: raise HTTPException(status_code=400, detail="Empty text")
     vol = 0.0 if config["audio"].get("muted", False) else (config["audio"].get("volume", 85) / 100.0)
-    start_t = time.time()
-    wav_np, sr = await asyncio.to_thread(engine_mgr.generate_multi, text=text, volume=vol)
-    gen_dur = time.time() - start_t
-    buf = io.BytesIO()
-    sf.write(buf, wav_np, sr, format="WAV")
-    buf.seek(0)
-    now_ms = int(time.time() * 1000)
-    filename = f"out_{now_ms}.wav"
-    sf.write(str(OUTPUT_DIR / filename), wav_np, sr)
-    headers = {"X-Filename": filename, "X-Gen-Time": f"{gen_dur:.2f}s", "Access-Control-Expose-Headers": "X-Filename, X-Gen-Time"}
-    return StreamingResponse(buf, media_type="audio/wav", headers=headers)
+    try:
+        start_t = time.time()
+        wav_np, sr = await asyncio.to_thread(engine_mgr.generate_multi, text=text, volume=vol)
+        gen_dur = time.time() - start_t
+        if wav_np is None or len(wav_np) == 0:
+            raise ValueError("Synthesis returned empty audio.")
+        buf = io.BytesIO()
+        sf.write(buf, wav_np, sr, format="WAV")
+        buf.seek(0)
+        now_ms = int(time.time() * 1000)
+        filename = f"out_{now_ms}.wav"
+        sf.write(str(OUTPUT_DIR / filename), wav_np, sr)
+        headers = {"X-Filename": filename, "X-Gen-Time": f"{gen_dur:.2f}s", "Access-Control-Expose-Headers": "X-Filename, X-Gen-Time"}
+        return StreamingResponse(buf, media_type="audio/wav", headers=headers)
+    except Exception as e:
+        logger.error(f"[Generate Error] Synthesis failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.websocket("/ws/live")
 async def ws_live(websocket: WebSocket):
