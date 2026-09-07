@@ -338,12 +338,29 @@ class EngineManager:
             active.init_model()
         self.reencode_all_voices()
 
+    def get_active_custom(self) -> BaseTTSEngine:
+        return self.engines.get(self.active_custom_engine, self.engines["chatterbox_nano"])
+
+    def switch_custom_engine(self, engine_name: str):
+        if engine_name in self.engines and engine_name != "kokoro":
+            self.active_custom_engine = engine_name
+            self.active_engine_name = engine_name
+            partner_eng = self.get_active_custom()
+            if hasattr(partner_eng, "init_model"):
+                partner_eng.init_model()
+            self.reencode_all_voices()
+            self.save_settings_to_config()
+            logger.info(f"[Dual-Engine] Activated partner model: {engine_name} (running alongside Kokoro-82M)")
+
     def get_active(self) -> BaseTTSEngine:
         return self.engines.get(self.active_engine_name, self.engines["chatterbox_nano"])
 
     def switch_engine(self, engine_name: str):
-        if engine_name in self.engines:
-            self.active_engine_name = engine_name
+        if engine_name != "kokoro":
+            self.switch_custom_engine(engine_name)
+        else:
+            self.active_engine_name = "kokoro"
+            self.save_settings_to_config()
             active = self.get_active()
             if hasattr(active, "init_model"):
                 active.init_model()
@@ -406,7 +423,7 @@ class EngineManager:
                     seg_sr = kokoro_engine.sr
                 else:
                     # PRO TIER: Use active custom cloning engine
-                    act_eng = self.get_active()
+                    act_eng = self.get_active_custom()
                     if getattr(act_eng, "model", None) is None:
                         logger.warning(f"[PRO Notice] Active model '{act_eng.name}' has not downloaded weights yet. Using Kokoro fallback.")
                         seg_wav = kokoro_engine.generate(seg_text, "af_heart", {"speed": speed_override if speed_override is not None else 1.0})

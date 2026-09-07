@@ -700,7 +700,9 @@ async def get_stream_status():
 @app.get("/api/engine")
 async def get_engine_state():
     return {
-        "active": engine_mgr.active_engine_name,
+        "base_engine": "kokoro",
+        "active_custom_engine": getattr(engine_mgr, "active_custom_engine", "chatterbox_nano"),
+        "active": getattr(engine_mgr, "active_custom_engine", "chatterbox_nano"),
         "device": engine_mgr.device,
         "precision": engine_mgr.precision,
         "compile": bool(getattr(engine_mgr, "compile_model", False)),
@@ -714,11 +716,15 @@ async def get_engine_state():
 
 @app.post("/api/engine/switch")
 async def switch_engine(data: dict):
-    eng = data.get("engine", "kokoro")
-    if eng != "kokoro" and not is_pro_licensed():
+    eng = data.get("engine", "chatterbox_nano")
+    if not is_pro_licensed():
         raise HTTPException(status_code=403, detail="VoiceForge PRO license required to activate custom cloning engines.")
-    engine_mgr.switch_engine(eng)
-    return {"status": "success", "active": eng}
+    engine_mgr.switch_custom_engine(eng)
+    return {
+        "status": "success",
+        "active_custom_engine": engine_mgr.active_custom_engine,
+        "base_engine": "kokoro"
+    }
 
 @app.post("/api/engine/params")
 async def update_engine_params(data: dict):
@@ -1061,6 +1067,9 @@ async def get_models_status():
         size_mb = get_dir_size_mb(m_path) if is_installed else 0.0
         dl_state = model_download_status.get(m_id, "idle")
 
+        is_base = (m_id == "kokoro")
+        is_partner = (m_id == getattr(engine_mgr, "active_custom_engine", "chatterbox_nano"))
+
         status[m_id] = {
             "id": m_id,
             "name": info["name"],
@@ -1071,7 +1080,9 @@ async def get_models_status():
             "folder_path": str((BASE_DIR / "pretrained_models" / info.get("folder", m_id)).resolve()),
             "manual_url": info.get("manual_url", ""),
             "download_state": dl_state,
-            "active": (m_id == engine_mgr.active_engine_name) or (m_id == "kokoro")
+            "active": (is_base or is_partner),
+            "is_base": is_base,
+            "is_partner": is_partner
         }
     return {"status": "success", "models": status}
 

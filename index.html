@@ -1234,7 +1234,7 @@
         badge.textContent = d.device === "cuda" ? `🚀 GPU (CUDA Active | ${d.gpu_name})` : "🖥 CPU Mode Active";
         badge.style.color = isCuda ? "#22c55e" : "#94a3b8";
       }
-      safeSetText("status-engine", `Engine: ${currentEngine} (${d.device.toUpperCase()})`);
+      safeSetText("status-engine", `🟢 Dual Engine: Kokoro-82M + ${currentEngine.toUpperCase()} (Partner)`);
     }
 
     function onMaxVoicesSlider(val) {
@@ -1913,27 +1913,45 @@
         grid.innerHTML = Object.values(models).map(m => {
           const isInstalled = m.installed;
           const isDownloading = m.download_state === "downloading";
-          
+          const isKokoro = (m.id === "kokoro");
+          const isActivePartner = (m.id === currentEngine && !isKokoro);
+          const isLocked = (!isKokoro && !isProActive);
+
           let badge = "";
           if (isDownloading) {
-            badge = `<span class="badge-pill" style="background:rgba(234,179,8,0.2); color:#facc15;">⏳ Downloading in background...</span>`;
+            badge = `<span class="badge-pill" style="background:rgba(234,179,8,0.2); color:#facc15;">⏳ Downloading...</span>`;
           } else if (isInstalled) {
             badge = `<span class="badge-pill" style="background:rgba(34,197,94,0.2); color:#4ade80;">✓ Installed (${m.size_mb > 0 ? m.size_mb + ' MB' : m.approx_size})</span>`;
           } else {
             badge = `<span class="badge-pill" style="background:rgba(239,68,68,0.2); color:#f87171;">Not Installed (${m.approx_size})</span>`;
           }
 
-          const activeTag = m.active 
-            ? `<span style="font-size:0.7rem; color:#38bdf8; font-weight:700; margin-left:6px;">⚡ ACTIVE</span>` 
-            : '';
+          // Dual-Engine Badges
+          let activationBtn = "";
+          if (isKokoro) {
+            activationBtn = `<span class="badge-pill" style="background:rgba(34,197,94,0.2); color:#4ade80; border:1px solid #22c55e; padding:4px 12px; font-weight:800;">🟢 ALWAYS ACTIVE (Base Engine)</span>`;
+          } else if (isLocked) {
+            activationBtn = `<span class="badge-pill" style="background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); padding:4px 10px; font-weight:700;">🔒 PRO Feature</span>`;
+          } else if (isInstalled) {
+            if (isActivePartner) {
+              activationBtn = `<button class="btn btn-success" style="padding:4px 14px; font-size:0.75rem; box-shadow:0 0 14px rgba(34,197,94,0.6); font-weight:800;" disabled>🟢 ACTIVE PARTNER MODEL</button>`;
+            } else {
+              activationBtn = `<button class="btn btn-secondary" style="padding:4px 14px; font-size:0.75rem; border:1px solid #ef4444; color:#f87171; font-weight:700;" onclick="activateCustomModel('${m.id}')">🔴 Activate as Partner</button>`;
+            }
+          }
 
           let actionButtons = "";
-          if (isDownloading) {
+          if (isLocked) {
+            actionButtons = `
+              <button class="btn btn-secondary" style="border:1px solid #f59e0b; color:#fbbf24; font-weight:700; font-size:0.72rem; padding:4px 10px;" onclick="openModal('license-modal')">🔒 Unlock with PRO</button>
+              <button class="btn btn-secondary" style="padding:4px 8px; font-size:0.72rem;" onclick="openManualInstructions('${m.id}')">📖 Info</button>
+            `;
+          } else if (isDownloading) {
             actionButtons = `<button class="btn btn-secondary" style="padding:4px 10px; font-size:0.72rem;" disabled>⏳ Downloading...</button>`;
           } else if (isInstalled) {
             actionButtons = `
               <button class="btn btn-secondary" style="padding:4px 8px; font-size:0.72rem;" onclick="openManualInstructions('${m.id}')">📂 Folder</button>
-              <button class="btn btn-danger" style="padding:4px 10px; font-size:0.72rem;" onclick="deleteModel('${m.id}')" ${m.id === currentEngine ? 'disabled title="Switch active engine first"' : ''}>🗑️ Remove</button>
+              <button class="btn btn-danger" style="padding:4px 10px; font-size:0.72rem;" onclick="deleteModel('${m.id}')" ${isActivePartner ? 'disabled title="Deactivate before deleting"' : ''}>🗑️ Remove</button>
             `;
           } else {
             actionButtons = `
@@ -1942,13 +1960,17 @@
             `;
           }
 
+          const cardBorder = isActivePartner ? 'border: 2px solid var(--live-green); box-shadow: 0 0 18px rgba(34,197,94,0.3);' : 'border: 1px solid var(--glass-border);';
+          const cardOpacity = isLocked ? "opacity:0.7; border-style:dashed;" : "";
+
           return `
-            <div style="background:rgba(0,0,0,0.25); border:1px solid var(--glass-border); padding:12px; border-radius:10px; display:flex; flex-direction:column; justify-content:space-between; gap:10px;">
+            <div style="background:rgba(0,0,0,0.25); ${cardBorder} padding:14px; border-radius:12px; display:flex; flex-direction:column; justify-content:space-between; gap:10px; ${cardOpacity}">
               <div>
-                <div style="font-weight:700; font-size:0.85rem; display:flex; align-items:center; justify-content:space-between;">
-                  <span>${m.name} ${activeTag}</span>
+                <div style="font-weight:700; font-size:0.9rem; display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; flex-wrap:wrap; gap:6px;">
+                  <span>${m.name}</span>
+                  ${activationBtn}
                 </div>
-                <div style="font-size:0.75rem; color:var(--text-dim); margin-top:2px;">${m.description}</div>
+                <div style="font-size:0.75rem; color:var(--text-dim);">${m.description}</div>
               </div>
               <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px; flex-wrap:wrap; gap:6px;">
                 ${badge}
@@ -1962,25 +1984,6 @@
       } catch (e) {
         console.error("loadModelStatus error:", e);
       }
-    }
-
-    async function deleteModel(id) {
-      if (!confirm(`Are you sure you want to remove model weights for '${id}' to free disk space?`)) return;
-      try {
-        const res = await fetch(`/api/models/${id}`, { method: "DELETE" });
-        const d = await res.json();
-        if (!res.ok) throw new Error(d.detail || "Delete failed");
-        alert(`✓ Removed model '${id}' from disk.`);
-        loadModelStatus();
-      } catch (e) {
-        alert("Delete notice: " + e.message);
-      }
-    }
-
-    async function downloadModel(id) {
-      alert(`⬇️ Started background download for '${id}'. It will download and cache automatically.`);
-      await fetch(`/api/models/${id}/download`, { method: "POST" });
-      setTimeout(loadModelStatus, 4000);
     }
 
     let ws;

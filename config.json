@@ -6,9 +6,10 @@
     "auto_chatter_voices": true
   },
   "engine": {
-    "active": "kokoro",
+    "active": "chatterbox_nano",
     "device": "cuda",
-    "compile": false
+    "compile": false,
+    "active_custom_model": "chatterbox_nano"
   },
   "memory": {
     "tier": "vram",
@@ -83,7 +84,7 @@
     }
   ],
   "event_triggers": [],
-  "gumroad_product_id": "Y5ekd7PYG87jMvspw9YEDg==",
+  "gumroad_product_id": "Y5ekd7PYG87jMvspw9yEDg==",
   "chatter_voices": {},
   "gumroad_url": "https://slayermind3.gumroad.com/l/voiceforge_pro",
   "gumroad_permalink": "voiceforge_pro"
