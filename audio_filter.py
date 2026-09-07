@@ -13,7 +13,7 @@ FILTER_CONFIG_FILE = BASE_DIR / "filter_rules.json"
 DEFAULT_FILTER_RULES = {
     "blocked_users": [],
     "block_keywords": ["spam", "giveaway", "free followers", "click here", "discord.gg/scam"],
-    "allow_list": ["littlesaltybear", "saltylittlebear", "coomer", "ron", "swifty", "FoodistFemboy"],
+    "allow_list": [],
     "min_length": 1,
     "max_length": 500,
     "block_bots": False,
