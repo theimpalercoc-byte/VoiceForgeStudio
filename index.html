@@ -645,7 +645,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
             license_key: input.value.trim(),
-            product_id: pidInput ? pidInput.value.trim() : "Y5ekd7PYG87jMvspw9YEDg=="
+            product_id: pidInput ? pidInput.value.trim() : "Y5ekd7PYG87jMvspw9yEDg=="
           })
         });
         const d = await res.json();
@@ -2130,7 +2130,7 @@
             <label style="font-size:0.75rem; color:#38bdf8; font-weight:700;">GUMROAD PRODUCT ID:</label>
             <span style="font-size:0.7rem; color:var(--text-dim);">Pre-filled with your official Product ID</span>
           </div>
-          <input type="text" id="gumroad-product-id-input" value="Y5ekd7PYG87jMvspw9YEDg==" style="margin-top:4px; font-family:monospace; font-size:0.82rem; padding:8px 10px; color:#4ade80; background:rgba(0,0,0,0.4);">
+          <input type="text" id="gumroad-product-id-input" value="Y5ekd7PYG87jMvspw9yEDg==" style="margin-top:4px; font-family:monospace; font-size:0.82rem; padding:8px 10px; color:#4ade80; background:rgba(0,0,0,0.4);">
         </div>
 
         <div id="license-status-msg" style="font-size:0.82rem; padding:8px; border-radius:8px; display:none;"></div>

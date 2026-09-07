@@ -79,7 +79,7 @@ DEFAULT_CONFIG = {
     "voice_profiles": {},
     "chatter_voices": {},
     "license": {"pro": False},
-    "gumroad_product_id": "Y5ekd7PYG87jMvspw9YEDg==",
+    "gumroad_product_id": "Y5ekd7PYG87jMvspw9yEDg==",
     "gumroad_permalink": "voiceforge_pro"
 }
 
@@ -124,7 +124,7 @@ ws_log_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(m
 logging.getLogger().addHandler(ws_log_handler)
 
 # 4. Verified Gumroad Configuration
-GUMROAD_PRODUCT_ID = "Y5ekd7PYG87jMvspw9YEDg=="
+GUMROAD_PRODUCT_ID = "Y5ekd7PYG87jMvspw9yEDg=="
 GUMROAD_PRODUCT_PERMALINK = "voiceforge_pro"
 GUMROAD_STORE_URL = "https://slayermind3.gumroad.com/l/voiceforge_pro"
 
@@ -440,7 +440,7 @@ async def get_license_status():
     }
 
 # =============================================================
-# FIXED: Direct Gumroad Verifier - Always sends Y5ekd7PYG87jMvspw9YEDg==
+# FIXED: Direct Gumroad Verifier - Always sends Y5ekd7PYG87jMvspw9yEDg==
 # =============================================================
 @app.post("/api/license/activate")
 async def activate_gumroad_license(data: dict):
@@ -454,7 +454,7 @@ async def activate_gumroad_license(data: dict):
         raise HTTPException(status_code=400, detail="Please enter a valid Gumroad license key.")
 
     # Target product_id: uses the pre-filled box or config default
-    target_pid = raw_pid or config.get("gumroad_product_id") or "Y5ekd7PYG87jMvspw9YEDg=="
+    target_pid = raw_pid or config.get("gumroad_product_id") or "Y5ekd7PYG87jMvspw9yEDg=="
     config["gumroad_product_id"] = target_pid
     save_config(config)
 
