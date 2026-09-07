@@ -1,13 +1,3 @@
-
-def check_pro_unlocked() -> bool:
-    if CONFIG_FILE.exists():
-        try:
-            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            return bool(cfg.get("license", {}).get("pro", False))
-        except Exception:
-            pass
-    return False
-
 import io
 import os
 import sys
@@ -45,6 +35,14 @@ from kokoro_engine import kokoro_engine, KOKORO_VOICES
 
 logger = logging.getLogger("EngineManager")
 
+BASE_DIR = Path(__file__).resolve().parent
+VOICES_DIR = BASE_DIR / "voices"
+OUTPUT_DIR = BASE_DIR / "output"
+CONFIG_FILE = BASE_DIR / "config.json"
+
+VOICES_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(exist_ok=True)
+
 # -------------------------------------------------------------
 # Upstream Chatterbox Bugfix (Issue #499): Prevent float64/Double promotion
 # -------------------------------------------------------------
@@ -81,24 +79,24 @@ try:
 except Exception as e:
     logger.debug(f"Chatterbox patch notice: {e}")
 
-
-BASE_DIR = Path(__file__).resolve().parent
-VOICES_DIR = BASE_DIR / "voices"
-OUTPUT_DIR = BASE_DIR / "output"
-CONFIG_FILE = BASE_DIR / "config.json"
-
-VOICES_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
-
+# -------------------------------------------------------------
+# Helper Utilities (Weights, Audio Bridge, Speed, Parser)
+# -------------------------------------------------------------
+def check_pro_unlocked() -> bool:
+    if CONFIG_FILE.exists():
+        try:
+            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            return bool(cfg.get("license", {}).get("pro", False))
+        except Exception:
+            pass
+    return False
 
 def find_chatterbox_weights() -> Optional[Path]:
-    """Finds Chatterbox weights in local pretrained_models or HuggingFace hub snapshots."""
-    # 1. Local pretrained_models folder
+    """Scans both local pretrained_models and HuggingFace cache snapshots."""
     p1 = BASE_DIR / "pretrained_models" / "chatterbox-turbo"
     if p1.exists() and (any(p1.glob("*.safetensors")) or any(p1.glob("*.pt"))):
         return p1
 
-    # 2. HuggingFace Hub Cache (scans snapshots)
     hf_hub = Path.home() / ".cache" / "huggingface" / "hub"
     if hf_hub.exists():
         for d in hf_hub.glob("models--ResembleAI--chatterbox*"):
@@ -112,13 +110,8 @@ def find_chatterbox_weights() -> Optional[Path]:
 
     return None
 
-
 def resolve_audio_path_for_loader(file_path: Path) -> Path:
-    """
-    Transparent .vfs audio bridge:
-    Allows .vfs disguised files in voices/ to be decoded seamlessly by librosa and libsndfile,
-    while also supporting standard .mp3, .wav, .flac, .ogg files added by users.
-    """
+    """Transparent .vfs bridge: Decodes .vfs disguised tracks while supporting .mp3/.wav."""
     if not file_path or not file_path.exists():
         return file_path
 
@@ -126,7 +119,7 @@ def resolve_audio_path_for_loader(file_path: Path) -> Path:
         cache_dir = OUTPUT_DIR / ".vfs_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(file_path, "rb") as f:
+        with open(str(file_path), "rb") as f:
             header = f.read(4)
 
         is_mp3 = header.startswith(b"ID3") or (len(header) >= 2 and header[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"))
@@ -134,13 +127,12 @@ def resolve_audio_path_for_loader(file_path: Path) -> Path:
 
         cached_file = cache_dir / f"{file_path.stem}{target_ext}"
         if not cached_file.exists() or cached_file.stat().st_mtime < file_path.stat().st_mtime:
-            shutil.copy2(file_path, cached_file)
+            shutil.copy2(str(file_path), str(cached_file))
         return cached_file
 
     return file_path
 
 def find_voice_file(voice_name: str) -> Optional[Path]:
-    """Finds custom voices supporting both .vfs disguised tracks and user .mp3/.wav files."""
     v_clean = voice_name.lower().replace("!", "").strip()
     supported_exts = [".vfs", ".mp3", ".wav", ".ogg", ".flac"]
 
@@ -213,6 +205,9 @@ def parse_segments(text: str) -> List[Tuple[str, str, Optional[float]]]:
 
     return segments if segments else [("default", text, None)]
 
+# -------------------------------------------------------------
+# Base Engine Interfaces & Concrete Implementations
+# -------------------------------------------------------------
 class BaseTTSEngine:
     def __init__(self, name: str, device: str = "cuda"):
         self.name = name
@@ -250,7 +245,7 @@ class ChatterboxNanoEngine(BaseTTSEngine):
 
                 weights_dir = find_chatterbox_weights()
                 if weights_dir is not None:
-                    logger.info(f"[Chatterbox-Turbo] Found weights at {weights_dir}. Loading on {dev}...")
+                    logger.info(f"[Chatterbox-Turbo] Loading weights from {weights_dir} on {dev}...")
                     self.model = ChatterboxTurboTTS.from_local(ckpt_dir=str(weights_dir), device=dev)
                     self.sr = getattr(self.model, "sr", 24000)
                     logger.info("✓ Chatterbox-Turbo model ready.")
@@ -273,7 +268,7 @@ class ChatterboxNanoEngine(BaseTTSEngine):
             self.init_model()
 
         if self.model is not None and ref_path and ref_path.exists():
-            logger.info(f"[Chatterbox Clone] Synthesizing '{voice_name}' using custom reference: {ref_path.name}")
+            logger.info(f"[Chatterbox Clone] Synthesizing '{voice_name}' using reference: {ref_path.name}")
             wav = self.model.generate(
                 text=text,
                 audio_prompt_path=str(ref_path),
@@ -284,7 +279,7 @@ class ChatterboxNanoEngine(BaseTTSEngine):
                 wav = wav.squeeze().float().cpu().numpy()
             return wav.astype(np.float32)
 
-        raise RuntimeError(f"Chatterbox could not generate voice '{voice_name}'. Reference audio not found in voices/ folder.")
+        raise RuntimeError(f"Chatterbox could not generate voice '{voice_name}'. Reference audio not found.")
 
 class CosyVoice2Engine(BaseTTSEngine):
     def __init__(self, device: str = "cuda"):
@@ -293,7 +288,7 @@ class CosyVoice2Engine(BaseTTSEngine):
         self.sr = 24000
 
     def init_model(self):
-        logger.info("CosyVoice 2 initialized (routing to Chatterbox).")
+        logger.info("CosyVoice 2 initialized.")
 
     def generate(self, text: str, voice_name: str, params: Optional[Dict[str, Any]] = None) -> np.ndarray:
         return engine_mgr.engines["chatterbox_nano"].generate(text, voice_name, params)
@@ -307,39 +302,51 @@ class Qwen3Engine(BaseTTSEngine):
     def generate(self, text: str, voice_name: str, params: Optional[Dict[str, Any]] = None) -> np.ndarray:
         return engine_mgr.engines["chatterbox_nano"].generate(text, voice_name, params)
 
+# -------------------------------------------------------------
+# Dual-Engine Central Orchestrator
+# -------------------------------------------------------------
 class EngineManager:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.precision = "bf16" if self.device == "cuda" else "fp32"
         self.compile_model = False
-        self.active_engine_name = "chatterbox_nano"
+        
+        # Explicit Dual-Engine Architecture Attributes
+        self.base_engine_name = "kokoro"             # Permanent Partner #1 (Always Active)
+        self.active_custom_engine = "chatterbox_nano" # Active Partner #2 (Cloning Engine)
+        self.active_engine_name = self.active_custom_engine
+
         self.memory_tier = "vram" if self.device == "cuda" else "ram"
         self.max_cached_voices = 50
         self.test_phrase = "Hello! This is [voice] testing in-memory speed on VoiceForge."
 
         self.engines: Dict[str, Any] = {
+            "kokoro": kokoro_engine,
             "chatterbox_nano": ChatterboxNanoEngine(self.device),
             "cosyvoice2": CosyVoice2Engine(self.device),
             "qwen3_tts": Qwen3Engine(self.device),
-            "kokoro": kokoro_engine,
         }
 
         self.engine_params = {
+            "kokoro": {"speed": 1.0},
             "chatterbox_nano": {"exaggeration": 0.95, "cfg_weight": 0.5, "temperature": 1.15},
             "cosyvoice2": {"instruct": "speak in a natural clear tone", "speed": 1.0, "streaming": False},
-            "qwen3_tts": {"emotion": "neutral", "speed": 1.0, "language": "auto"},
-            "kokoro": {"speed": 1.0}
+            "qwen3_tts": {"emotion": "neutral", "speed": 1.0, "language": "auto"}
         }
 
     def init_engines(self):
         self.load_settings_from_config()
-        active = self.get_active()
-        if hasattr(active, "init_model"):
-            active.init_model()
+        partner = self.get_active_custom()
+        if hasattr(partner, "init_model"):
+            partner.init_model()
         self.reencode_all_voices()
 
+    def get_active(self) -> BaseTTSEngine:
+        return self.get_active_custom()
+
     def get_active_custom(self) -> BaseTTSEngine:
-        return self.engines.get(self.active_custom_engine, self.engines["chatterbox_nano"])
+        target = getattr(self, "active_custom_engine", getattr(self, "active_engine_name", "chatterbox_nano"))
+        return self.engines.get(target, self.engines["chatterbox_nano"])
 
     def switch_custom_engine(self, engine_name: str):
         if engine_name in self.engines and engine_name != "kokoro":
@@ -350,10 +357,7 @@ class EngineManager:
                 partner_eng.init_model()
             self.reencode_all_voices()
             self.save_settings_to_config()
-            logger.info(f"[Dual-Engine] Activated partner model: {engine_name} (running alongside Kokoro-82M)")
-
-    def get_active(self) -> BaseTTSEngine:
-        return self.engines.get(self.active_engine_name, self.engines["chatterbox_nano"])
+            logger.info(f"[Dual-Engine] Activated partner model: {engine_name} (alongside Kokoro-82M)")
 
     def switch_engine(self, engine_name: str):
         if engine_name != "kokoro":
@@ -361,12 +365,6 @@ class EngineManager:
         else:
             self.active_engine_name = "kokoro"
             self.save_settings_to_config()
-            active = self.get_active()
-            if hasattr(active, "init_model"):
-                active.init_model()
-            self.reencode_all_voices()
-            self.save_settings_to_config()
-            logger.info(f"Switched active custom cloning engine to: {engine_name}")
 
     def reencode_all_voices(self):
         for eng_name, eng in self.engines.items():
@@ -374,7 +372,7 @@ class EngineManager:
                 if hasattr(eng, "voice_paths"): eng.voice_paths.clear()
                 if hasattr(eng, "voice_audio_cache"): eng.voice_audio_cache.clear()
 
-        supported_exts = [".vfs", ".wav", ".mp3", ".ogg", ".flac"]
+        supported_exts = [".vfs", ".mp3", ".wav", ".ogg", ".flac"]
         found = [f for f in VOICES_DIR.iterdir() if f.suffix.lower() in supported_exts] if VOICES_DIR.exists() else []
         for f in found:
             name = f.stem.lower()
@@ -417,7 +415,6 @@ class EngineManager:
                     seg_sr = kokoro_engine.sr
                 except Exception as k_err:
                     logger.error(f"[Kokoro Synthesis Error] Failed on '{v_clean}': {k_err}")
-                    # Fallback tone/heart
                     seg_wav = kokoro_engine.generate(seg_text, "af_heart", {"speed": 1.0})
                     seg_sr = kokoro_engine.sr
             else:
@@ -427,14 +424,15 @@ class EngineManager:
                     seg_wav = kokoro_engine.generate(seg_text, "af_heart", {"speed": speed_override if speed_override is not None else 1.0})
                     seg_sr = kokoro_engine.sr
                 else:
-                    # PRO Tier: Handled by active custom partner engine
+                    # PRO TIER: Handled by active custom partner engine
                     act_eng = self.get_active_custom()
                     try:
                         if getattr(act_eng, "model", None) is None:
                             act_eng.init_model()
 
                         if getattr(act_eng, "model", None) is not None:
-                            p = self.engine_params.get(self.active_custom_engine, {}).copy()
+                            custom_key = getattr(self, "active_custom_engine", getattr(self, "active_engine_name", "chatterbox_nano"))
+                            p = self.engine_params.get(custom_key, {}).copy()
                             try:
                                 from app import config as app_cfg
                                 v_prof = app_cfg.get("voice_profiles", {}).get(v_clean, {})
@@ -497,7 +495,10 @@ class EngineManager:
             try:
                 cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
                 eng_cfg = cfg.get("engine", {})
-                self.active_engine_name = eng_cfg.get("active", "chatterbox_nano")
+                self.active_custom_engine = eng_cfg.get("active_custom_model", eng_cfg.get("active", "chatterbox_nano"))
+                if self.active_custom_engine == "kokoro": self.active_custom_engine = "chatterbox_nano"
+                self.active_engine_name = self.active_custom_engine
+
                 self.compile_model = eng_cfg.get("compile", False)
                 self.memory_tier = cfg.get("memory", {}).get("tier", "vram")
                 self.max_cached_voices = cfg.get("memory", {}).get("max_cached_voices", 50)
@@ -513,7 +514,8 @@ class EngineManager:
         try:
             cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
             cfg.setdefault("engine", {})
-            cfg["engine"]["active"] = self.active_engine_name
+            cfg["engine"]["active_custom_model"] = getattr(self, "active_custom_engine", "chatterbox_nano")
+            cfg["engine"]["active"] = getattr(self, "active_custom_engine", "chatterbox_nano")
             cfg["engine"]["compile"] = self.compile_model
             cfg["engine"]["device"] = self.device
             cfg.setdefault("memory", {})
